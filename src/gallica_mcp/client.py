@@ -5,9 +5,10 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import httpx
+
+from .query_parser import build_text_query_clause
 
 
 class GallicaClient:
@@ -24,17 +25,26 @@ class GallicaClient:
         'oai_dc': 'http://www.openarchives.org/OAI/2.0/oai_dc/'
     }
 
-    def __init__(self, cache_dir: Path | None = None, max_concurrent_requests: int = 5):
+    def __init__(
+        self,
+        cache_dir: Path | None = None,
+        max_concurrent_requests: int = 1,
+        min_request_interval: float = 1.0
+    ):
         """Initialize Gallica client.
 
         Args:
             cache_dir: Directory for caching downloaded text files
             max_concurrent_requests: Maximum number of concurrent API requests
+            min_request_interval: Minimum delay (seconds) between requests
         """
         self.cache_dir = cache_dir or Path("cache/gallica")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-        self._semaphore = asyncio.Semaphore(max_concurrent_requests)
+        self._request_semaphore = asyncio.Semaphore(max_concurrent_requests)
+        self._rate_limit_lock = asyncio.Lock()
+        self._min_request_interval = max(min_request_interval, 0.0)
+        self._last_request_time = 0.0
 
     async def close(self):
         """Close the HTTP client."""
@@ -97,7 +107,7 @@ class GallicaClient:
             'maximumRecords': str(records_per_page)
         }
 
-        response = await self.client.get(self.SRU_BASE_URL, params=params)
+        response = await self._rate_limited_get(self.SRU_BASE_URL, params=params)
         response.raise_for_status()
 
         # Parse XML response
@@ -211,7 +221,7 @@ class GallicaClient:
         else:
             text_url = f"{self.TEXT_BASE_URL}/ark:/{identifier}.texteBrut"
 
-        response = await self.client.get(text_url)
+        response = await self._rate_limited_get(text_url)
         response.raise_for_status()
 
         # Save to cache
@@ -261,21 +271,20 @@ class GallicaClient:
         doc_id = ark.replace('ark:/', '').split('/')[-1]
 
         try:
-            async with self._semaphore:
-                params = {
-                    'ark': doc_id,
-                    'query': search_terms
-                }
+            params = {
+                'ark': doc_id,
+                'query': search_terms
+            }
 
-                response = await self.client.get(
-                    self.CONTENT_SEARCH_URL,
-                    params=params
-                )
-                response.raise_for_status()
+            response = await self._rate_limited_get(
+                self.CONTENT_SEARCH_URL,
+                params=params
+            )
+            response.raise_for_status()
 
-                # Parse ContentSearch response
-                snippets = self._parse_content_search_response(response.text)
-                document['snippets'] = snippets[:5]  # Limit to 5 snippets per document
+            # Parse ContentSearch response
+            snippets = self._parse_content_search_response(response.text)
+            document['snippets'] = snippets[:5]  # Limit to 5 snippets per document
 
         except Exception:
             # If snippet fetching fails, continue without snippets
@@ -339,19 +348,7 @@ class GallicaClient:
 
         # Text search in OCR content
         if query and query.strip():
-            # Check if query contains CQL operators (AND, OR, NOT, parentheses, quotes)
-            # If so, use it as-is; otherwise wrap in quotes with 'text all'
-            query_stripped = query.strip()
-            has_operators = any(op in query_stripped.upper() for op in [' AND ', ' OR ', ' NOT '])
-            has_quotes = '"' in query_stripped
-            has_parens = '(' in query_stripped or ')' in query_stripped
-
-            if has_operators or has_quotes or has_parens:
-                # Query uses CQL syntax, wrap in 'text all (...)' to scope it
-                parts.append(f'text all ({query_stripped})')
-            else:
-                # Simple text query, wrap in quotes
-                parts.append(f'text all "{query_stripped}"')
+            parts.append(self._build_text_clause(query.strip()))
 
         # Title search
         if title and title.strip():
@@ -385,7 +382,34 @@ class GallicaClient:
 
         # If no search criteria, search everything
         if not parts:
-            return 'gallica any ""'
+            cql = 'gallica any ""'
+        else:
+            # Join all parts with AND
+            cql = ' and '.join(parts)
 
-        # Join all parts with AND
-        return ' and '.join(parts)
+        return f'{cql} sortby dc.date/sort.ascending'
+
+    def _build_text_clause(self, query: str) -> str:
+        """Normalize a user text query into a valid CQL clause."""
+        return build_text_query_clause(query)
+
+    async def _rate_limited_get(self, url: str, **kwargs) -> httpx.Response:
+        """Issue a GET request honoring concurrency and rate limits."""
+        async with self._request_semaphore:
+            await self._wait_for_request_slot()
+            response = await self.client.get(url, **kwargs)
+            return response
+
+    async def _wait_for_request_slot(self) -> None:
+        """Ensure minimum spacing between outbound requests."""
+        if self._min_request_interval <= 0:
+            return
+
+        async with self._rate_limit_lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            wait_time = self._min_request_interval - (now - self._last_request_time)
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
+                now = loop.time()
+            self._last_request_time = now

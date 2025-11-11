@@ -39,7 +39,7 @@ gallica-mcp/
 **ContentSearch API:**
 - Base URL: `https://gallica.bnf.fr/services/ContentSearch`
 - Returns text snippets with search terms highlighted
-- Used automatically for each search result (concurrent requests with rate limiting)
+- Used automatically for each search result (requests go through the global rate limiter: default 1 req/sec, single concurrency)
 
 **Text Retrieval:**
 - Plain text: `https://gallica.bnf.fr/[ark].texteBrut`

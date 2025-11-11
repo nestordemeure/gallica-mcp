@@ -6,6 +6,7 @@ Search and access OCR text from millions of digitized documents:
 - **search_gallica**: Text search with boolean operators (AND, OR, NOT), exact phrase matching with quotes, and parentheses for grouping. Returns paginated results (50 docs/page) with metadata and text snippets showing search terms in context.
 - **advanced_search_gallica**: Search with filters for creators (authors), document types, date ranges, language, and title. All filter parameters are optional.
 - **download_text**: Downloads complete OCR text from any document using its ARK identifier. Caches results locally for fast repeated access.
+- **Global rate limiting**: All Gallica API calls share a single rate limiter (1 request/second, single concurrency by default, configurable in `GallicaClient`).
 
 Both search functions convert your inputs into CQL (Contextual Query Language) queries that are sent to Gallica's SRU API.
 
@@ -50,3 +51,9 @@ Test with MCP Inspector:
 ```bash
 uv run fastmcp dev src/gallica_mcp/server.py
 ```
+
+# TODO
+
+* fix bug on request generation
+* try requests and downloads
+* are there snippets in results? not seing any at a glance
