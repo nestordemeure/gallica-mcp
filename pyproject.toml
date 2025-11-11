@@ -1,0 +1,21 @@
+[project]
+name = "gallica-mcp"
+version = "0.1.0"
+description = "MCP server for searching and retrieving documents from Gallica (BnF)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+gallica-mcp = "gallica_mcp.server:main"
+gallica-mcp-install = "gallica_mcp.install:install"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gallica_mcp"]
