@@ -209,3 +209,4 @@ __marimo__/
 # MCP Server specific
 /cache
 .claude
+.gemini

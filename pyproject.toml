@@ -11,7 +11,7 @@ dependencies = [
 
 [project.scripts]
 gallica-mcp = "gallica_mcp.server:main"
-gallica-mcp-install = "gallica_mcp.install:install"
+gallica-mcp-install = "gallica_mcp.install:main"
 
 [build-system]
 requires = ["hatchling"]

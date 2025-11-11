@@ -1,76 +1,171 @@
-"""CLI installer for Gallica MCP server."""
+"""
+Installation helper for MCP CLI integration
+"""
 
 import argparse
-import json
 import sys
+import subprocess
 from pathlib import Path
 
 
-def install():
-    """Install Gallica MCP server to Claude desktop configuration."""
+def install_claude(enable_advanced_search=False):
+    """Install to Claude Code using CLI command"""
+    project_dir = Path.cwd().resolve()
+
+    try:
+        # Build command args
+        cmd_args = [
+            "claude", "mcp", "add",
+            "--transport", "stdio",
+            "--scope", "user",
+            "gallica",
+            "--",
+            "uv", "--directory", str(project_dir), "run", "gallica-mcp"
+        ]
+
+        # Add advanced search flag if requested
+        if enable_advanced_search:
+            cmd_args.append("--enable-advanced-search")
+
+        # Use the claude CLI to add the MCP server
+        result = subprocess.run(
+            cmd_args,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print(f"✓ Installed to Claude Code")
+        print(f"  Project directory: {project_dir}")
+        if enable_advanced_search:
+            print(f"  Advanced search: enabled")
+        if result.stdout:
+            print(f"  {result.stdout.strip()}")
+    except FileNotFoundError:
+        raise Exception("'claude' command not found. Make sure Claude Code CLI is installed and in your PATH.")
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Failed to add MCP server: {e.stderr.strip() if e.stderr else str(e)}")
+
+
+def install_codex(enable_advanced_search=False):
+    """Install to Codex CLI using CLI command"""
+    project_dir = Path.cwd().resolve()
+
+    try:
+        # Build command args
+        cmd_args = [
+            "codex", "mcp", "add",
+            "gallica",
+            "--",
+            "uv", "--directory", str(project_dir), "run", "gallica-mcp"
+        ]
+
+        # Add advanced search flag if requested
+        if enable_advanced_search:
+            cmd_args.append("--enable-advanced-search")
+
+        # Use the codex CLI to add the MCP server
+        result = subprocess.run(
+            cmd_args,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print(f"✓ Installed to Codex CLI")
+        print(f"  Project directory: {project_dir}")
+        if enable_advanced_search:
+            print(f"  Advanced search: enabled")
+        if result.stdout:
+            print(f"  {result.stdout.strip()}")
+    except FileNotFoundError:
+        raise Exception("'codex' command not found. Make sure Codex CLI is installed and in your PATH.")
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Failed to add MCP server: {e.stderr.strip() if e.stderr else str(e)}")
+
+
+def install_gemini(enable_advanced_search=False):
+    """Install to Gemini CLI using CLI command"""
+    project_dir = Path.cwd().resolve()
+
+    try:
+        # Build command args
+        cmd_args = [
+            "gemini", "mcp", "add",
+            "gallica",
+            "uv", "--directory", str(project_dir), "run", "gallica-mcp"
+        ]
+
+        # Add advanced search flag if requested
+        if enable_advanced_search:
+            cmd_args.append("--enable-advanced-search")
+
+        # Use the gemini CLI to add the MCP server
+        result = subprocess.run(
+            cmd_args,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print(f"✓ Installed to Gemini CLI")
+        print(f"  Project directory: {project_dir}")
+        if enable_advanced_search:
+            print(f"  Advanced search: enabled")
+        if result.stdout:
+            print(f"  {result.stdout.strip()}")
+    except FileNotFoundError:
+        raise Exception("'gemini' command not found. Make sure Gemini CLI is installed and in your PATH.")
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Failed to add MCP server: {e.stderr.strip() if e.stderr else str(e)}")
+
+
+def main():
+    """Install gallica MCP server to all detected CLIs"""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Install Gallica MCP Server')
     parser.add_argument('--enable-advanced-search', action='store_true',
                         help='Enable the advanced_search_gallica tool with filter parameters')
     args = parser.parse_args()
 
-    # Determine config path based on platform
-    if sys.platform == "darwin":
-        config_path = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-    elif sys.platform == "win32":
-        config_path = Path.home() / "AppData" / "Roaming" / "Claude" / "claude_desktop_config.json"
-    else:  # Linux/Unix
-        config_path = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    project_dir = Path.cwd().resolve()
 
-    # Load existing config or create new one
-    if config_path.exists():
-        with open(config_path, 'r') as f:
-            config = json.load(f)
-    else:
-        config = {}
-
-    # Ensure mcpServers section exists
-    if "mcpServers" not in config:
-        config["mcpServers"] = {}
-
-    # Get the absolute path to server.py
-    server_path = Path(__file__).parent / "server.py"
-
-    # Build args list
-    server_args = [
-        "--directory",
-        str(Path(__file__).parent.parent.parent),
-        "run",
-        "gallica-mcp"
-    ]
-
-    # Add advanced search flag if requested
+    print(f"Installing gallica MCP server...")
+    print(f"Working directory: {project_dir}")
     if args.enable_advanced_search:
-        server_args.append("--enable-advanced-search")
-
-    # Add Gallica MCP server configuration
-    config["mcpServers"]["gallica"] = {
-        "command": "uv",
-        "args": server_args
-    }
-
-    # Create config directory if it doesn't exist
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write updated config
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=2)
-
-    print(f"✓ Gallica MCP server installed to {config_path}")
-    print("\nConfiguration added:")
-    print(json.dumps(config["mcpServers"]["gallica"], indent=2))
-    if args.enable_advanced_search:
-        print("\n✓ Advanced search enabled (advanced_search_gallica tool available)")
+        print(f"Advanced search: enabled\n")
     else:
-        print("\n  Advanced search disabled (only search_gallica tool available)")
-        print("  To enable: run 'uv run gallica-mcp-install --enable-advanced-search'")
-    print("\nRestart Claude desktop to use the Gallica MCP server.")
+        print(f"Advanced search: disabled\n")
+
+    installed = []
+
+    # Try installing to all CLIs
+    try:
+        install_claude(args.enable_advanced_search)
+        installed.append("Claude Code")
+    except Exception as e:
+        print(f"⚠ Could not install to Claude Code: {e}")
+
+    try:
+        install_codex(args.enable_advanced_search)
+        installed.append("Codex CLI")
+    except Exception as e:
+        print(f"⚠ Could not install to Codex CLI: {e}")
+
+    try:
+        install_gemini(args.enable_advanced_search)
+        installed.append("Gemini CLI")
+    except Exception as e:
+        print(f"⚠ Could not install to Gemini CLI: {e}")
+
+    if installed:
+        print(f"\n✓ Successfully installed to: {', '.join(installed)}")
+    else:
+        print(f"\n✗ No CLIs were configured")
+        sys.exit(1)
+
+    if not args.enable_advanced_search:
+        print(f"\n  To enable advanced search: run 'uv run gallica-mcp-install --enable-advanced-search'")
+
+    print(f"\nRestart your CLI to use the server.")
 
 
 if __name__ == "__main__":
-    install()
+    main()
