@@ -46,7 +46,7 @@ async def search_gallica(query: str, page: int = 1) -> dict:
     """Search Gallica for documents matching a text query.
 
     Searches across OCR content with support for boolean operators and exact phrases.
-    Returns paginated results with metadata and text snippets.
+    Returns paginated results with metadata.
 
     Args:
         query: Text to search in OCR content. Supports CQL query syntax:
@@ -58,7 +58,11 @@ async def search_gallica(query: str, page: int = 1) -> dict:
             - Parentheses: "(Houdini OR Houdin) AND escape" (group operations for precedence)
             - Combine all: '"Harry Houdini" AND (escape OR illusion) NOT death'
 
-            IMPORTANT: Boolean operators (AND, OR, NOT) MUST be in UPPERCASE.
+            IMPORTANT: Gallica uses FUZZY MATCHING by default. Searching "hanussen" may return
+            "haussen", "hansen", etc. For exact matches, use double quotes: '"hanussen"'.
+            RECOMMENDED: Use quotes by default unless you want fuzzy matching.
+            Boolean operators (AND, OR, NOT) MUST be UPPERCASE.
+
             The query is converted to CQL format automatically and searches OCR text content.
 
         page: Page number for pagination, 1-indexed (default: 1)
@@ -75,7 +79,9 @@ async def search_gallica(query: str, page: int = 1) -> dict:
                 - date: Publication date (if available)
                 - type: Document type (e.g., monographie, périodique)
                 - language: Language code (if available)
-                - snippets: List of text excerpts showing search terms in context (up to 5 per document)
+                - snippets: List of text excerpts with:
+                    - text: Snippet text showing search terms in context
+                    - page: Page identifier (e.g., "PAG_200" for page 200)
 
     Examples:
         # Simple search
@@ -111,13 +117,16 @@ if ENABLE_ADVANCED_SEARCH:
     ) -> dict:
         """Search Gallica with advanced filtering options.
 
-        Returns paginated results (up to 50 documents per page) with metadata and text snippets.
+        Returns paginated results (up to 50 documents per page) with metadata.
         All parameters are converted to CQL (Contextual Query Language) and combined with AND logic.
 
         Args:
             query: Text to search in OCR content. Same boolean operator support as search_gallica:
                 AND, OR, NOT (UPPERCASE), exact phrases with quotes, parentheses for grouping.
                 Use empty string "" to search by filters only. (default: "")
+
+                IMPORTANT: Gallica uses FUZZY MATCHING by default. Use quotes for exact matches: '"hanussen"'.
+                RECOMMENDED: Use quotes by default unless you want fuzzy matching.
             page: Page number for pagination, 1-indexed (default: 1)
             creators: List of creator/author names to filter by (uses OR logic between names, AND with other filters).
                 Examples: ["Victor Hugo"], ["Houdin", "Houdini"] (optional)
@@ -146,7 +155,9 @@ if ENABLE_ADVANCED_SEARCH:
                     - date: Publication date (if available)
                     - type: Document type (e.g., monographie, périodique)
                     - language: Language code (if available)
-                    - snippets: List of text excerpts showing search terms in context (up to 5 per document)
+                    - snippets: List of text excerpts with:
+                        - text: Snippet text showing search terms in context
+                        - page: Page identifier (e.g., "PAG_200" for page 200)
 
         Examples:
             # Search with author filter

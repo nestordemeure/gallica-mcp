@@ -35,6 +35,7 @@ gallica-mcp/
 - Base URL: `https://gallica.bnf.fr/SRU`
 - Query language: CQL (Contextual Query Language)
 - Response format: XML with Dublin Core metadata
+- **Collapsing:** Uses `collapsing=false` parameter to return all individual periodical issues separately (not collapsed by collection)
 
 **ContentSearch API:**
 - Base URL: `https://gallica.bnf.fr/services/ContentSearch`
@@ -114,15 +115,17 @@ Two search functions are available (advanced search is optional):
 
 ### Query Syntax
 
+**IMPORTANT:** Gallica uses **fuzzy matching by default**. Searching `"hanussen"` may return "haussen", "hansen", etc. Use double quotes for exact matches: `'"hanussen"'`. **Recommended:** Use quotes by default unless you want fuzzy search.
+
 The `query` parameter supports:
 
-1. **Simple text** - All words must appear (AND logic by default)
-   - `"Houdini"` → finds "Houdini"
-   - `"magic tricks"` → finds both "magic" AND "tricks" (any order)
+1. **Simple text** - All words must appear (AND logic by default) with **FUZZY MATCHING**
+   - `"Houdini"` → finds "Houdini", "Houdin", "Houdine", etc.
+   - `"magic tricks"` → finds both "magic" AND "tricks" (any order, fuzzy for each)
 
-2. **Exact phrases** - Use double quotes
-   - `'"Harry Houdini"'` → exact phrase match
-   - `'"Les Misérables"'` → exact phrase match
+2. **Exact phrases** - Use double quotes for **EXACT MATCHING** (no fuzzy)
+   - `'"Harry Houdini"'` → exact phrase only
+   - `'"hanussen"'` → exact word only (no "haussen")
 
 3. **AND operator** - Explicit AND (uppercase)
    - `"magic AND illusion"` → both must appear
@@ -175,7 +178,8 @@ The `query` parameter supports:
 ## Internal CQL Generation
 
 The client automatically builds CQL queries from the parameters:
-- Text query uses `text all "query"`
+- Text query without quotes: `text all "query"` (fuzzy matching, with expansion)
+- Text query with quotes: `text adj "query"` (exact matching, no expansion)
 - Multiple creators use OR logic: `(dc.creator all "A" or dc.creator all "B")`
 - Multiple doc types use OR logic: `(dc.type adj "A" or dc.type adj "B")`
 - All filters are combined with AND logic
@@ -191,11 +195,28 @@ Downloaded text files are cached locally to avoid repeated API calls for the sam
 ## Document Types
 
 - `monographie` - Books
-- `périodique` - Periodicals
+- `périodique` - Periodicals (collections)
+- `fascicule` - Individual periodical issues
 - `manuscrit` - Manuscripts
 - `image` - Images
 - `carte` - Maps and plans
 - `partition` - Musical scores
+
+## Periodical Handling
+
+**Important:** With `collapsing=false`, the server returns individual periodical issues as separate results rather than grouping them by collection.
+
+**Example:** Searching for "Hanussen" returns:
+- Without `collapsing=false`: 167 results (one per periodical collection)
+- With `collapsing=false`: 465 results (each periodical issue counted separately)
+
+For a periodical like "Istanbul" that has 6 issues mentioning "Hanussen", all 6 issues are returned as individual results with:
+- Unique `dc:identifier` for each issue (e.g., `ark:/12148/bd6t552367k`)
+- Specific publication dates (e.g., `1921-05-02`, `1921-05-05`, etc.)
+- `dc:type` set to `fascicule` instead of `périodique`
+- Each issue can be downloaded and searched independently
+
+This ensures users see **all matching content**, not just one arbitrary issue per periodical.
 
 ## Notes
 
@@ -203,3 +224,4 @@ Downloaded text files are cached locally to avoid repeated API calls for the sam
 - OCR text files can be very large (100KB-1MB+)
 - Documents use ARK (Archival Resource Key) identifiers
 - All text is UTF-8 encoded
+- Search results include all individual periodical issues (not collapsed)

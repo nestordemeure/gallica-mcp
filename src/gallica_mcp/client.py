@@ -3,6 +3,7 @@
 import asyncio
 import re
 import xml.etree.ElementTree as ET
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +63,7 @@ class GallicaClient:
         language: str | None = None,
         title: str | None = None
     ) -> dict[str, Any]:
-        """Search Gallica using SRU protocol and fetch snippets for results.
+        """Search Gallica using the SRU protocol.
 
         Args:
             query: Text to search in OCR content (simple text, not CQL)
@@ -79,7 +80,7 @@ class GallicaClient:
             Dictionary containing:
                 - page: Current page number
                 - total_results: Total number of matching documents
-                - documents: List of document metadata with snippets
+                - documents: List of document metadata
         """
         # Build CQL query from parameters
         cql_query = self._build_cql_query(
@@ -104,7 +105,8 @@ class GallicaClient:
             'operation': 'searchRetrieve',
             'query': cql_query,
             'startRecord': str(start_record),
-            'maximumRecords': str(records_per_page)
+            'maximumRecords': str(records_per_page),
+            'collapsing': 'false'  # Return all individual issues, not collapsed by periodical
         }
 
         response = await self._rate_limited_get(self.SRU_BASE_URL, params=params)
@@ -129,7 +131,7 @@ class GallicaClient:
         # Use the original query text for snippet fetching
         search_terms = query.strip() if query else ""
 
-        # Fetch snippets concurrently for all documents
+        # Fetch snippets sequentially for all documents
         if documents and search_terms:
             await self._fetch_snippets_for_documents(documents, search_terms)
 
@@ -147,6 +149,11 @@ class GallicaClient:
 
         Returns:
             Dictionary with document metadata or None if parsing fails
+
+        Note:
+            With collapsing=false, periodical issues are returned as individual
+            records with dc:identifier pointing directly to the issue ARK.
+            The extraRecordData/uri field provides a fallback identifier.
         """
         try:
             # Get Dublin Core metadata
@@ -206,27 +213,17 @@ class GallicaClient:
         Returns:
             Path to the cached text file
         """
-        # Clean identifier (remove ark:/ prefix if present)
         clean_id = identifier.replace('ark:/', '').replace('/', '_')
 
-        # Check cache first
         cache_file = self.cache_dir / f"{clean_id}.txt"
         if cache_file.exists():
             return str(cache_file)
 
-        # Build download URL for plain text
-        # Handle both formats: 'ark:/12148/...' and just '12148/...'
-        if identifier.startswith('ark:/'):
-            text_url = f"{self.TEXT_BASE_URL}/{identifier}.texteBrut"
-        else:
-            text_url = f"{self.TEXT_BASE_URL}/ark:/{identifier}.texteBrut"
+        ark_identifier = self._normalize_identifier(identifier)
+        html_text = await self._retrieve_texte_brut(ark_identifier)
+        plain_text = self._html_to_plain_text(html_text)
 
-        response = await self._rate_limited_get(text_url)
-        response.raise_for_status()
-
-        # Save to cache
-        cache_file.write_text(response.text, encoding='utf-8')
-
+        cache_file.write_text(plain_text, encoding='utf-8')
         return str(cache_file)
 
     async def _fetch_snippets_for_documents(
@@ -234,20 +231,15 @@ class GallicaClient:
         documents: list[dict[str, Any]],
         search_terms: str
     ) -> None:
-        """Fetch snippets concurrently for all documents.
+        """Fetch snippets sequentially for all documents.
 
         Args:
             documents: List of document dictionaries to add snippets to
             search_terms: Search terms to use for ContentSearch
         """
-        # Create tasks for fetching snippets concurrently
-        tasks = [
-            self._fetch_snippets_for_document(doc, search_terms)
-            for doc in documents
-        ]
-
-        # Wait for all tasks to complete
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Fetch snippets one at a time (sequential, no concurrency)
+        for doc in documents:
+            await self._fetch_snippets_for_document(doc, search_terms)
 
     async def _fetch_snippets_for_document(
         self,
@@ -276,7 +268,7 @@ class GallicaClient:
                 'query': search_terms
             }
 
-            response = await self._rate_limited_get(
+            response = await self._get_no_rate_limit(
                 self.CONTENT_SEARCH_URL,
                 params=params
             )
@@ -284,20 +276,22 @@ class GallicaClient:
 
             # Parse ContentSearch response
             snippets = self._parse_content_search_response(response.text)
-            document['snippets'] = snippets[:5]  # Limit to 5 snippets per document
+            document['snippets'] = snippets  # Get all snippets provided
 
         except Exception:
             # If snippet fetching fails, continue without snippets
             pass
 
-    def _parse_content_search_response(self, xml_text: str) -> list[str]:
-        """Parse ContentSearch XML response to extract text snippets.
+    def _parse_content_search_response(self, xml_text: str) -> list[dict[str, Any]]:
+        """Parse ContentSearch XML response to extract text snippets with page numbers.
 
         Args:
             xml_text: XML response from ContentSearch API
 
         Returns:
-            List of text snippets with search terms in context
+            List of dictionaries containing:
+                - text: Text snippet with search terms in context
+                - page: Page identifier (e.g., "PAG_200" for page 200)
         """
         snippets = []
 
@@ -307,13 +301,22 @@ class GallicaClient:
             # Find all content items
             for item in root.findall('.//item'):
                 content_elem = item.find('content')
+                page_elem = item.find('p_id')
+
                 if content_elem is not None and content_elem.text:
                     # Strip HTML tags but keep the text
                     text = re.sub(r'<[^>]+>', '', content_elem.text)
                     # Clean up whitespace
                     text = ' '.join(text.split())
+
+                    # Extract page identifier
+                    page_id = page_elem.text if page_elem is not None and page_elem.text else None
+
                     if text:
-                        snippets.append(text)
+                        snippets.append({
+                            'text': text,
+                            'page': page_id
+                        })
 
         except Exception:
             pass
@@ -400,6 +403,11 @@ class GallicaClient:
             response = await self.client.get(url, **kwargs)
             return response
 
+    async def _get_no_rate_limit(self, url: str, **kwargs) -> httpx.Response:
+        """Issue a GET request without rate limiting (used for sequential snippet fetching)."""
+        response = await self.client.get(url, **kwargs)
+        return response
+
     async def _wait_for_request_slot(self) -> None:
         """Ensure minimum spacing between outbound requests."""
         if self._min_request_interval <= 0:
@@ -413,3 +421,71 @@ class GallicaClient:
                 await asyncio.sleep(wait_time)
                 now = loop.time()
             self._last_request_time = now
+
+    def _normalize_identifier(self, identifier: str) -> str:
+        """Ensure identifier is an ark:/... string recognized by Gallica."""
+        ident = identifier.strip()
+        if ident.startswith('ark:/'):
+            return ident
+        if ident.startswith('ark:'):
+            ident = ident[len('ark:'):]
+        ident = ident.lstrip('/')
+        return f"ark:/{ident}"
+
+    async def _retrieve_texte_brut(self, ark_identifier: str) -> str:
+        """Try multiple texteBrut URL permutations until one returns content."""
+        urls = self._build_texte_brut_urls(ark_identifier)
+        errors: list[str] = []
+
+        for url in urls:
+            try:
+                response = await self._rate_limited_get(url)
+            except httpx.HTTPError as exc:
+                errors.append(f"{url} -> {exc}")
+                continue
+
+            if response.status_code == 200 and response.text.strip():
+                return response.text
+
+            errors.append(f"{url} -> HTTP {response.status_code}")
+
+        error_message = (
+            "Unable to download texteBrut for "
+            f"{ark_identifier} (tried: {'; '.join(errors)})"
+        )
+        raise RuntimeError(error_message)
+
+    def _build_texte_brut_urls(self, ark_identifier: str) -> list[str]:
+        """Generate the common texteBrut URL variants Gallica supports."""
+        base = f"{self.TEXT_BASE_URL}/{ark_identifier.strip('/')}"
+        return [
+            f"{base}.texteBrut",
+            f"{base}/texteBrut",
+        ]
+
+    def _html_to_plain_text(self, html_text: str) -> str:
+        """Convert Gallica's texteBrut HTML page into normalized plain text."""
+        text = html_text
+
+        # Preserve logical breaks before dropping remaining tags.
+        text = re.sub(r'(?i)<\s*br\s*/?>', '\n', text)
+        text = re.sub(r'(?i)<\s*hr\b[^>]*>', '\n___GALLICA_HR___\n', text)
+        text = re.sub(
+            r'(?i)</?\s*(p|div|section|article|li|h[1-6]|tr|td|table)\b[^>]*>',
+            '\n',
+            text,
+        )
+
+        text = re.sub(r'<[^>]+>', '', text)
+        text = text.replace('___GALLICA_HR___', '<hr>')
+        text = unescape(text)
+        text = text.replace('\r', '')
+
+        # Collapse excessive whitespace while keeping intentional blank lines.
+        text = re.sub(r'[\t\x0b\f]+', ' ', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r' +\n', '\n', text)
+        text = re.sub(r'\n +', '\n', text)
+        text = re.sub(r' {2,}', ' ', text)
+
+        return text.strip()
