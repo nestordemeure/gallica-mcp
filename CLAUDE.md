@@ -226,9 +226,12 @@ advanced_search_gallica(query="prestidigitation", public_domain_only=False)
 ```
 
 **Default behavior:**
-- Only public domain documents are returned (rights: "domaine public")
+- Only public domain documents are returned using the filter: `dc.rights any "domaine public"`
 - All documents have downloadable OCR text
 - Ensures users can access the full text of search results
+- **Excludes restricted documents** such as RetroNews partnership newspapers that require institutional access
+
+**Note:** The filter uses `dc.rights any "domaine public"` rather than `access any "fayes"` because the latter can return documents marked as "restricted use" (such as BnF-partenariats newspapers) that require special accreditation to download.
 
 ## Internal CQL Generation
 
@@ -236,7 +239,7 @@ The client automatically builds CQL queries from the parameters:
 - Text query: `text all "query"` (processed by query parser)
 - Multiple creators use OR logic: `(dc.creator all "A" or dc.creator all "B")`
 - Multiple doc types use OR logic: `(dc.type adj "A" or dc.type adj "B")`
-- Public domain filter: `access any "fayes"` (applied by default)
+- Public domain filter: `dc.rights any "domaine public"` (applied by default)
 - All filters are combined with AND logic
 - SRU parameter `exactSearch` controls fuzzy matching behavior
 

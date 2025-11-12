@@ -367,7 +367,7 @@ class GallicaClient:
 
         # Access rights (public domain)
         if public_domain_only:
-            parts.append('access any "fayes"')
+            parts.append('dc.rights any "domaine public"')
 
         # If no search criteria, search everything
         if not parts:
