@@ -216,14 +216,14 @@ class GallicaClient:
 
         cache_file = self.cache_dir / f"{clean_id}.txt"
         if cache_file.exists():
-            return str(cache_file)
+            return str(cache_file.resolve())
 
         ark_identifier = self._normalize_identifier(identifier)
         html_text = await self._retrieve_texte_brut(ark_identifier)
         plain_text = self._html_to_plain_text(html_text)
 
         cache_file.write_text(plain_text, encoding='utf-8')
-        return str(cache_file)
+        return str(cache_file.resolve())
 
     async def get_snippets(self, identifier: str, query: str) -> list[dict[str, Any]]:
         """Fetch text snippets for a specific document using the ContentSearch API.
