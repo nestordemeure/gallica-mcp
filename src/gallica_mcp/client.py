@@ -432,6 +432,13 @@ class GallicaClient:
             if response.status_code == 200 and response.text.strip():
                 return response.text
 
+            # If we get a 429 (rate limit), don't try other URLs
+            if response.status_code == 429:
+                raise RuntimeError(
+                    f"Rate limited by Gallica API (HTTP 429) when accessing {ark_identifier}. "
+                    "Please wait before making more requests."
+                )
+
             errors.append(f"{url} -> HTTP {response.status_code}")
 
         error_message = (
