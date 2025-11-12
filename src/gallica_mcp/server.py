@@ -70,6 +70,7 @@ async def search_gallica(query: str, page: int = 1) -> dict:
         Dictionary containing:
             - page: Current page number
             - total_results: Total number of matching documents
+            - total_pages: Total number of pages available
             - documents: List of documents with:
                 - identifier: ARK identifier (use with download_text or get_snippets)
                 - title: Document title
@@ -150,6 +151,7 @@ if ENABLE_ADVANCED_SEARCH:
             Dictionary containing:
                 - page: Current page number
                 - total_results: Total number of matching documents
+                - total_pages: Total number of pages available
                 - documents: List of documents with:
                     - identifier: ARK identifier (use with download_text or get_snippets)
                     - title: Document title

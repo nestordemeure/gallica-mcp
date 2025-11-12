@@ -134,9 +134,13 @@ class GallicaClient:
             if doc:
                 documents.append(doc)
 
+        # Calculate total pages
+        total_pages = (total_results + records_per_page - 1) // records_per_page if total_results > 0 else 0
+
         return {
             'page': page,
             'total_results': total_results,
+            'total_pages': total_pages,
             'documents': documents
         }
 
