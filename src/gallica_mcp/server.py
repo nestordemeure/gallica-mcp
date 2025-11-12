@@ -46,7 +46,7 @@ async def search_gallica(query: str, page: int = 1) -> dict:
     """Search Gallica for documents matching a text query.
 
     Searches across OCR content with support for boolean operators and exact phrases.
-    Returns paginated results with metadata.
+    Returns paginated results with metadata. Uses exact matching by default.
 
     Args:
         query: Text to search in OCR content. Supports CQL query syntax:
@@ -58,11 +58,7 @@ async def search_gallica(query: str, page: int = 1) -> dict:
             - Parentheses: "(Houdini OR Houdin) AND escape" (group operations for precedence)
             - Combine all: '"Harry Houdini" AND (escape OR illusion) NOT death'
 
-            IMPORTANT: Gallica uses FUZZY MATCHING by default. Searching "hanussen" may return
-            "haussen", "hansen", etc. For exact matches, use double quotes: '"hanussen"'.
-            RECOMMENDED: Use quotes by default unless you want fuzzy matching.
             Boolean operators (AND, OR, NOT) MUST be UPPERCASE.
-
             The query is converted to CQL format automatically and searches OCR text content.
 
         page: Page number for pagination, 1-indexed (default: 1)
@@ -113,7 +109,9 @@ if ENABLE_ADVANCED_SEARCH:
         date_start: int | None = None,
         date_end: int | None = None,
         language: str | None = None,
-        title: str | None = None
+        title: str | None = None,
+        public_domain_only: bool = True,
+        exact_search: bool = True
     ) -> dict:
         """Search Gallica with advanced filtering options.
 
@@ -124,9 +122,6 @@ if ENABLE_ADVANCED_SEARCH:
             query: Text to search in OCR content. Same boolean operator support as search_gallica:
                 AND, OR, NOT (UPPERCASE), exact phrases with quotes, parentheses for grouping.
                 Use empty string "" to search by filters only. (default: "")
-
-                IMPORTANT: Gallica uses FUZZY MATCHING by default. Use quotes for exact matches: '"hanussen"'.
-                RECOMMENDED: Use quotes by default unless you want fuzzy matching.
             page: Page number for pagination, 1-indexed (default: 1)
             creators: List of creator/author names to filter by (uses OR logic between names, AND with other filters).
                 Examples: ["Victor Hugo"], ["Houdin", "Houdini"] (optional)
@@ -137,6 +132,11 @@ if ENABLE_ADVANCED_SEARCH:
             date_end: Latest publication year (inclusive). Example: 1900 (optional)
             language: Language code (ISO 639-2, 3 letters). Examples: "fre" (French), "eng" (English), "lat" (Latin) (optional)
             title: Text to search in document titles. Simple text, not boolean operators. (optional)
+            public_domain_only: Restrict to public domain documents with freely downloadable OCR (default: True).
+                Set to False to include all documents regardless of access restrictions. (optional)
+            exact_search: Enable exact matching (default: True). When True, disables fuzzy matching for more precise results.
+                When False, enables fuzzy matching which may find variants and OCR errors (e.g., "hanussen" matches "haussen").
+                Note: Using quotes in the query (e.g., '"exact phrase"') always forces exact matching regardless of this setting. (optional)
 
         Filter Logic:
             - Multiple creators use OR: (creator1 OR creator2)
@@ -174,6 +174,12 @@ if ENABLE_ADVANCED_SEARCH:
 
             # Multiple document types with date range
             advanced_search_gallica(query="Napoleon", doc_types=["monographie", "périodique"], date_start=1800, date_end=1850)
+
+            # Include all documents (not just public domain)
+            advanced_search_gallica(query="prestidigitation", public_domain_only=False)
+
+            # Fuzzy matching for finding OCR variants
+            advanced_search_gallica(query="Hanussen", exact_search=False)
         """
         client = get_client()
         return await client.search(
@@ -185,16 +191,15 @@ if ENABLE_ADVANCED_SEARCH:
             date_start=date_start,
             date_end=date_end,
             language=language,
-            title=title
+            title=title,
+            public_domain_only=public_domain_only,
+            exact_search=exact_search
         )
 
 
 @mcp.tool()
 async def download_text(identifier: str) -> str:
-    """Download OCR text from a Gallica document and save to cache.
-
-    Downloads the full OCR-extracted text from a document and saves it to the local
-    cache directory. The text is retrieved in plain text format.
+    """Download OCR text from a Gallica document and save to cache in plain text format.
 
     Args:
         identifier: Gallica ARK identifier (e.g., 'ark:/12148/bpt6k5619759j')
@@ -226,26 +231,18 @@ async def server_info() -> Resource:
 
 Provides access to Gallica, the digital library of the Bibliothèque nationale de France (BnF).
 
-Features:
-- Fulltext search across millions of digitized documents
-- OCR text retrieval with local caching
-- Support for books, periodicals, manuscripts, images, maps, and more
+Available Tools:
+- search_gallica(query, page): Search OCR text with boolean operators (AND, OR, NOT)
+- download_text(identifier): Download full OCR text and cache locally
+- advanced_search_gallica(...): Search with filters (authors, dates, types, language)
 
-Search Query Syntax (CQL):
-- text all "term" - search in full OCR text
-- dc.title all "title" - search in titles
-- dc.creator all "author" - search by creator
-- Combine with: and, or, not
-- Operators: all (AND), any (OR), adj (exact phrase)
+Query Syntax:
+- Boolean operators: AND, OR, NOT (must be UPPERCASE)
+- Exact phrases: Use double quotes '"Harry Houdini"'
+- Grouping: Use parentheses (A OR B) AND C
 
-Document Types:
-- monographie (books)
-- périodique (periodicals)
-- manuscrit (manuscripts)
-- image (images)
-- carte (maps)
-
-Use search_gallica() to find documents and download_text() to retrieve OCR content.
+By default, searches return only public domain documents with downloadable OCR.
+Uses exact matching by default for precise results.
 """
     )
 

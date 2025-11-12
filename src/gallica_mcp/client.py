@@ -61,7 +61,9 @@ class GallicaClient:
         date_start: int | None = None,
         date_end: int | None = None,
         language: str | None = None,
-        title: str | None = None
+        title: str | None = None,
+        public_domain_only: bool = True,
+        exact_search: bool = True
     ) -> dict[str, Any]:
         """Search Gallica using the SRU protocol.
 
@@ -75,6 +77,8 @@ class GallicaClient:
             date_end: Latest publication year (inclusive)
             language: Language code (ISO 639-2)
             title: Text to search in titles
+            public_domain_only: Restrict to public domain documents with freely downloadable OCR (default True)
+            exact_search: Use exact matching (default True). When True, disables fuzzy matching.
 
         Returns:
             Dictionary containing:
@@ -90,7 +94,8 @@ class GallicaClient:
             date_start=date_start,
             date_end=date_end,
             language=language,
-            title=title
+            title=title,
+            public_domain_only=public_domain_only
         )
 
         # Calculate startRecord (SRU uses 1-based indexing)
@@ -106,7 +111,8 @@ class GallicaClient:
             'query': cql_query,
             'startRecord': str(start_record),
             'maximumRecords': str(records_per_page),
-            'collapsing': 'false'  # Return all individual issues, not collapsed by periodical
+            'collapsing': 'false',  # Return all individual issues, not collapsed by periodical
+            'exactSearch': 'true' if exact_search else 'false'  # Control fuzzy matching
         }
 
         response = await self._rate_limited_get(self.SRU_BASE_URL, params=params)
@@ -331,7 +337,8 @@ class GallicaClient:
         date_start: int | None = None,
         date_end: int | None = None,
         language: str | None = None,
-        title: str | None = None
+        title: str | None = None,
+        public_domain_only: bool = True
     ) -> str:
         """Build a CQL query from search parameters.
 
@@ -343,6 +350,7 @@ class GallicaClient:
             date_end: Latest publication year
             language: Language code
             title: Text to search in titles
+            public_domain_only: Restrict to public domain documents
 
         Returns:
             CQL query string
@@ -382,6 +390,10 @@ class GallicaClient:
         # Language
         if language:
             parts.append(f'dc.language adj "{language}"')
+
+        # Access rights (public domain)
+        if public_domain_only:
+            parts.append('access any "fayes"')
 
         # If no search criteria, search everything
         if not parts:

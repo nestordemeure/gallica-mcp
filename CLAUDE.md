@@ -9,6 +9,8 @@ MCP server for searching and retrieving documents from Gallica, the digital libr
 ## Functionality
 
 - **Fulltext search** with CQL operators (AND, OR, NOT, exact phrases)
+- **Exact vs. fuzzy matching** control (exact matching by default)
+- **Access rights filtering** for public domain documents (downloadable OCR)
 - **Text snippets** showing search terms in context (fetched concurrently via ContentSearch API)
 - **OCR text download** with local caching
 - **Pagination support** (up to 50 results per page)
@@ -95,6 +97,12 @@ advanced_search_gallica(query="alchimie", doc_types=["manuscrit"], language="fre
 
 # Multiple document types with date range
 advanced_search_gallica(query="Napoleon", doc_types=["monographie", "périodique"], date_start=1800, date_end=1850)
+
+# Include all documents (not just public domain)
+advanced_search_gallica(query="prestidigitation", public_domain_only=False)
+
+# Fuzzy matching for finding OCR errors and variants
+advanced_search_gallica(query="Hanussen", exact_search=False)
 ```
 
 ## Search Interface
@@ -115,17 +123,17 @@ Two search functions are available (advanced search is optional):
 
 ### Query Syntax
 
-**IMPORTANT:** Gallica uses **fuzzy matching by default**. Searching `"hanussen"` may return "haussen", "hansen", etc. Use double quotes for exact matches: `'"hanussen"'`. **Recommended:** Use quotes by default unless you want fuzzy search.
+**IMPORTANT:** By default, searches use **exact matching** for precise results. The `exact_search` parameter in `advanced_search_gallica` can be set to `False` to enable fuzzy matching (which may find OCR errors and variants).
 
 The `query` parameter supports:
 
-1. **Simple text** - All words must appear (AND logic by default) with **FUZZY MATCHING**
-   - `"Houdini"` → finds "Houdini", "Houdin", "Houdine", etc.
-   - `"magic tricks"` → finds both "magic" AND "tricks" (any order, fuzzy for each)
+1. **Simple text** - All words must appear (AND logic by default)
+   - `"Houdini"` → finds "Houdini"
+   - `"magic tricks"` → finds both "magic" AND "tricks" (any order)
 
-2. **Exact phrases** - Use double quotes for **EXACT MATCHING** (no fuzzy)
+2. **Exact phrases** - Use double quotes for phrase matching
    - `'"Harry Houdini"'` → exact phrase only
-   - `'"hanussen"'` → exact word only (no "haussen")
+   - `'"hanussen"'` → exact word only
 
 3. **AND operator** - Explicit AND (uppercase)
    - `"magic AND illusion"` → both must appear
@@ -158,6 +166,8 @@ The `query` parameter supports:
 - `date_end` (int) - Latest publication year (inclusive)
 - `language` (str) - Language code (ISO 639-2, 3 letters)
 - `title` (str) - Text to search in document titles
+- `public_domain_only` (bool) - Restrict to public domain documents with downloadable OCR (default: True)
+- `exact_search` (bool) - Enable exact matching (default: True). Set to False for fuzzy matching
 
 **Document Types:**
 - `monographie` - Books
@@ -175,14 +185,48 @@ The `query` parameter supports:
 - `ita` - Italian
 - `spa` - Spanish
 
+## Search Behavior
+
+### Exact vs. Fuzzy Matching
+
+**Default: Exact Matching** (`exact_search=True`)
+- Searches are precise, matching only exact terms
+- "Hanussen" finds only "Hanussen" (465 results)
+- Recommended for most use cases
+
+**Fuzzy Matching** (`exact_search=False`)
+- Searches find variants and OCR errors
+- "Hanussen" finds "Hanussen", "Haussen", "Hansen", etc. (6,450 results)
+- Useful for finding documents with OCR errors
+- Can produce many irrelevant results
+
+**Note:** Using quotes in the query (e.g., `'"exact phrase"'`) always forces exact phrase matching regardless of the `exact_search` setting.
+
+### Public Domain Filtering
+
+**By default**, searches return only **public domain documents** with freely downloadable OCR (`public_domain_only=True`).
+
+To include **all documents** regardless of access restrictions:
+
+```python
+# Include documents with usage restrictions
+advanced_search_gallica(query="prestidigitation", public_domain_only=False)
+```
+
+**Default behavior:**
+- Only public domain documents are returned (rights: "domaine public")
+- All documents have downloadable OCR text
+- Ensures users can access the full text of search results
+
 ## Internal CQL Generation
 
 The client automatically builds CQL queries from the parameters:
-- Text query without quotes: `text all "query"` (fuzzy matching, with expansion)
-- Text query with quotes: `text adj "query"` (exact matching, no expansion)
+- Text query: `text all "query"` (processed by query parser)
 - Multiple creators use OR logic: `(dc.creator all "A" or dc.creator all "B")`
 - Multiple doc types use OR logic: `(dc.type adj "A" or dc.type adj "B")`
+- Public domain filter: `access any "fayes"` (applied by default)
 - All filters are combined with AND logic
+- SRU parameter `exactSearch` controls fuzzy matching behavior
 
 ## Caching
 
