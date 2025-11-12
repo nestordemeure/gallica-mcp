@@ -134,13 +134,6 @@ class GallicaClient:
             if doc:
                 documents.append(doc)
 
-        # Use the original query text for snippet fetching
-        search_terms = query.strip() if query else ""
-
-        # Fetch snippets sequentially for all documents
-        if documents and search_terms:
-            await self._fetch_snippets_for_documents(documents, search_terms)
-
         return {
             'page': page,
             'total_results': total_results,
@@ -232,61 +225,42 @@ class GallicaClient:
         cache_file.write_text(plain_text, encoding='utf-8')
         return str(cache_file)
 
-    async def _fetch_snippets_for_documents(
-        self,
-        documents: list[dict[str, Any]],
-        search_terms: str
-    ) -> None:
-        """Fetch snippets sequentially for all documents.
+    async def get_snippets(self, identifier: str, query: str) -> list[dict[str, Any]]:
+        """Fetch text snippets for a specific document using the ContentSearch API.
 
         Args:
-            documents: List of document dictionaries to add snippets to
-            search_terms: Search terms to use for ContentSearch
+            identifier: Document ARK identifier (e.g., 'ark:/12148/bpt6k5619759j')
+            query: Search terms to find in the document
+
+        Returns:
+            List of dictionaries containing:
+                - text: Text snippet showing search terms in context
+                - page: Page identifier (e.g., "PAG_200" for page 200)
+
+        Example:
+            snippets = await client.get_snippets("ark:/12148/bpt6k5619759j", "Houdini")
         """
-        # Fetch snippets one at a time (sequential, no concurrency)
-        for doc in documents:
-            await self._fetch_snippets_for_document(doc, search_terms)
-
-    async def _fetch_snippets_for_document(
-        self,
-        document: dict[str, Any],
-        search_terms: str
-    ) -> None:
-        """Fetch snippets for a single document.
-
-        Args:
-            document: Document dictionary to add snippets to
-            search_terms: Search terms to use for ContentSearch
-        """
-        # Initialize snippets list
-        document['snippets'] = []
-
-        ark = document.get('identifier')
-        if not ark:
-            return
-
         # Extract just the document ID (remove ark:/ prefix)
+        ark = self._normalize_identifier(identifier)
         doc_id = ark.replace('ark:/', '').split('/')[-1]
 
         try:
             params = {
                 'ark': doc_id,
-                'query': search_terms
+                'query': query.strip()
             }
 
-            response = await self._get_no_rate_limit(
+            response = await self._rate_limited_get(
                 self.CONTENT_SEARCH_URL,
                 params=params
             )
             response.raise_for_status()
 
             # Parse ContentSearch response
-            snippets = self._parse_content_search_response(response.text)
-            document['snippets'] = snippets  # Get all snippets provided
+            return self._parse_content_search_response(response.text)
 
-        except Exception:
-            # If snippet fetching fails, continue without snippets
-            pass
+        except Exception as e:
+            raise RuntimeError(f"Failed to fetch snippets for {identifier}: {e}")
 
     def _parse_content_search_response(self, xml_text: str) -> list[dict[str, Any]]:
         """Parse ContentSearch XML response to extract text snippets with page numbers.
@@ -414,11 +388,6 @@ class GallicaClient:
             await self._wait_for_request_slot()
             response = await self.client.get(url, **kwargs)
             return response
-
-    async def _get_no_rate_limit(self, url: str, **kwargs) -> httpx.Response:
-        """Issue a GET request without rate limiting (used for sequential snippet fetching)."""
-        response = await self.client.get(url, **kwargs)
-        return response
 
     async def _wait_for_request_slot(self) -> None:
         """Ensure minimum spacing between outbound requests."""

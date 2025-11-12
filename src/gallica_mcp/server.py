@@ -48,6 +48,9 @@ async def search_gallica(query: str, page: int = 1) -> dict:
     Searches across OCR content with support for boolean operators and exact phrases.
     Returns paginated results with metadata. Uses exact matching by default.
 
+    Note: To get text snippets showing where your search terms appear within documents,
+    use the get_snippets tool with the document identifier and query.
+
     Args:
         query: Text to search in OCR content. Supports CQL query syntax:
             - Simple text: "Houdini" or "magic tricks" (all words must appear, any order)
@@ -68,16 +71,13 @@ async def search_gallica(query: str, page: int = 1) -> dict:
             - page: Current page number
             - total_results: Total number of matching documents
             - documents: List of documents with:
-                - identifier: ARK identifier (use with download_text)
+                - identifier: ARK identifier (use with download_text or get_snippets)
                 - title: Document title
                 - url: URL to view document on gallica.bnf.fr
                 - creators: List of authors/creators
                 - date: Publication date (if available)
                 - type: Document type (e.g., monographie, périodique)
                 - language: Language code (if available)
-                - snippets: List of text excerpts with:
-                    - text: Snippet text showing search terms in context
-                    - page: Page identifier (e.g., "PAG_200" for page 200)
 
     Examples:
         # Simple search
@@ -118,6 +118,9 @@ if ENABLE_ADVANCED_SEARCH:
         Returns paginated results (up to 50 documents per page) with metadata.
         All parameters are converted to CQL (Contextual Query Language) and combined with AND logic.
 
+        Note: To get text snippets showing where your search terms appear within documents,
+        use the get_snippets tool with the document identifier and query.
+
         Args:
             query: Text to search in OCR content. Same boolean operator support as search_gallica:
                 AND, OR, NOT (UPPERCASE), exact phrases with quotes, parentheses for grouping.
@@ -148,16 +151,13 @@ if ENABLE_ADVANCED_SEARCH:
                 - page: Current page number
                 - total_results: Total number of matching documents
                 - documents: List of documents with:
-                    - identifier: ARK identifier (use with download_text)
+                    - identifier: ARK identifier (use with download_text or get_snippets)
                     - title: Document title
                     - url: URL to view document on gallica.bnf.fr
                     - creators: List of authors/creators
                     - date: Publication date (if available)
                     - type: Document type (e.g., monographie, périodique)
                     - language: Language code (if available)
-                    - snippets: List of text excerpts with:
-                        - text: Snippet text showing search terms in context
-                        - page: Page identifier (e.g., "PAG_200" for page 200)
 
         Examples:
             # Search with author filter
@@ -220,6 +220,48 @@ async def download_text(identifier: str) -> str:
     return await client.download_text(identifier=identifier)
 
 
+@mcp.tool()
+async def get_snippets(identifier: str, query: str) -> dict:
+    """Fetch text snippets showing where search terms appear in a Gallica document.
+
+    Uses the ContentSearch API to find and return text excerpts with page numbers.
+    This is useful for locating specific content within a document after searching.
+
+    Args:
+        identifier: Gallica ARK identifier (e.g., 'ark:/12148/bpt6k5619759j')
+        query: Search terms to find in the document. Supports the same syntax as search_gallica:
+            - Simple text: "Houdini" or "magic tricks"
+            - Exact phrases: '"Harry Houdini"'
+            - Boolean operators: "magic AND illusion", "Houdini OR Houdin"
+            - Complex queries: '("Harry Houdini" OR "Jean Houdin") AND escape'
+
+    Returns:
+        Dictionary containing:
+            - identifier: The document ARK identifier
+            - query: The search query used
+            - snippets: List of text excerpts with:
+                - text: Snippet text showing search terms in context
+                - page: Page identifier (e.g., "PAG_200" for page 200)
+
+    Examples:
+        # Get snippets for a specific document
+        get_snippets("ark:/12148/bpt6k5619759j", "Houdini")
+
+        # Find exact phrase occurrences
+        get_snippets("ark:/12148/bpt6k5619759j", '"Harry Houdini"')
+
+        # Complex query
+        get_snippets("ark:/12148/bpt6k5619759j", "magic AND (illusion OR escape)")
+    """
+    client = get_client()
+    snippets = await client.get_snippets(identifier=identifier, query=query)
+    return {
+        'identifier': identifier,
+        'query': query,
+        'snippets': snippets
+    }
+
+
 @mcp.resource("gallica://info")
 async def server_info() -> Resource:
     """Provide information about the Gallica MCP server."""
@@ -233,6 +275,7 @@ Provides access to Gallica, the digital library of the Bibliothèque nationale d
 
 Available Tools:
 - search_gallica(query, page): Search OCR text with boolean operators (AND, OR, NOT)
+- get_snippets(identifier, query): Get text excerpts with page numbers for a specific document
 - download_text(identifier): Download full OCR text and cache locally
 - advanced_search_gallica(...): Search with filters (authors, dates, types, language)
 

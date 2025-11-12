@@ -11,7 +11,7 @@ MCP server for searching and retrieving documents from Gallica, the digital libr
 - **Fulltext search** with CQL operators (AND, OR, NOT, exact phrases)
 - **Exact vs. fuzzy matching** control (exact matching by default)
 - **Access rights filtering** for public domain documents (downloadable OCR)
-- **Text snippets** showing search terms in context (fetched concurrently via ContentSearch API)
+- **Text snippets** showing search terms in context (via optional get_snippets tool using ContentSearch API)
 - **OCR text download** with local caching
 - **Pagination support** (up to 50 results per page)
 
@@ -42,7 +42,7 @@ gallica-mcp/
 **ContentSearch API:**
 - Base URL: `https://gallica.bnf.fr/services/ContentSearch`
 - Returns text snippets with search terms highlighted
-- Used automatically for each search result (requests go through the global rate limiter: default 1 req/sec, single concurrency)
+- Used by the `get_snippets` tool (requests go through the global rate limiter: default 1 req/sec, single concurrency)
 
 **Text Retrieval:**
 - Plain text: `https://gallica.bnf.fr/[ark].texteBrut`
@@ -64,7 +64,7 @@ uv run gallica-mcp-install
 uv run gallica-mcp-install --enable-advanced-search
 ```
 
-The `--enable-advanced-search` flag enables the `advanced_search_gallica` tool. Without it, only `search_gallica` and `download_text` are available.
+The `--enable-advanced-search` flag enables the `advanced_search_gallica` tool. Without it, only `search_gallica`, `get_snippets`, and `download_text` are available.
 
 **Search Examples:**
 ```python
@@ -103,18 +103,30 @@ advanced_search_gallica(query="prestidigitation", public_domain_only=False)
 
 # Fuzzy matching for finding OCR errors and variants
 advanced_search_gallica(query="Hanussen", exact_search=False)
+
+# Get snippets for a specific document
+get_snippets(identifier="ark:/12148/bpt6k5619759j", query="Houdini")
+
+# Get snippets with complex query
+get_snippets(identifier="ark:/12148/bpt6k5619759j", query="magic AND (illusion OR escape)")
 ```
 
 ## Search Interface
 
-Two search functions are available (advanced search is optional):
+Three main tools are available (advanced search is optional):
 
 **`search_gallica(query, page=1)`** - Text search with boolean operators (always available)
 - Query supports CQL boolean operators: AND, OR, NOT
 - Exact phrase matching with quotes: "Harry Houdini"
 - Grouping with parentheses: (A OR B) AND C
 - Searches across all OCR content
-- Returns results with snippets
+- Returns document metadata (without snippets for faster searches)
+
+**`get_snippets(identifier, query)`** - Fetch text excerpts for a specific document (always available)
+- Takes a document identifier (ARK) and search query
+- Returns text snippets showing where search terms appear
+- Includes page numbers for each snippet (e.g., "PAG_200" for page 200)
+- Useful for locating specific content within a document after searching
 
 **`advanced_search_gallica(...)`** - Advanced search with filters (optional, enabled with `--enable-advanced-search`)
 - All parameters are optional (except defaults)
@@ -269,3 +281,4 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
 - Documents use ARK (Archival Resource Key) identifiers
 - All text is UTF-8 encoded
 - Search results include all individual periodical issues (not collapsed)
+- Use `get_snippets` to fetch text excerpts for specific documents after searching

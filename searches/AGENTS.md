@@ -3,6 +3,7 @@
 * Searches should be done using the Gallica MCP.
 * Always combine queries (with AND, OR, NOT, and exact phrases "...") when possible, instead of running several queries.
 * Use parentheses to group complex queries: `(A OR B) AND C`.
+* Since Gallica is mostly in French (plus some European languages: German, Italian, English, etc.), default to French keywords or OR them with other language variants (e.g., `"évasion" OR "escape"` or `"prestidigitation" OR "magic"`).
 * Do not hesitate to do subsequent searches as you realize that new keywords might be worth exploring.
 * Searches should be exhaustive: not skipping pages or focusing only on what appear to be the few most relevant hits.
 
