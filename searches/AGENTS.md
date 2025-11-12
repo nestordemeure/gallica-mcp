@@ -17,5 +17,5 @@
 ## Report
 
 * Reports should be factual, not interpretative.
-* References should contain URLs to sources when possible, formatted as `<url>` or `[url name](url)`.
+* References should contain URLs to sources when possible, formatted as `<url>` or `[document name](url)`.
 * If writing a report, it should be a Markdown file, with a relevant name, in the `./reports` subfolder.
