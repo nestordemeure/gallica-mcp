@@ -32,10 +32,7 @@ gallica-mcp/
 └── CLAUDE.md               # This file
 ```
 
-`client.py` holds all the behaviour; `server.py` and `cli.py` are thin presentation layers
-over it, so search semantics and caching stay identical no matter how it is called. The
-CLI exposes every filter unconditionally, where the MCP server hides them behind
-`--enable-advanced-search`.
+`client.py` holds all the behaviour; `server.py` and `cli.py` are thin presentation layers over it, so search semantics and caching stay identical no matter how it is called. The CLI exposes every filter unconditionally, where the MCP server hides them behind `--enable-advanced-search`.
 
 ## API Details
 
@@ -252,37 +249,19 @@ The client automatically builds CQL queries from the parameters:
 
 ## Rate Limiting
 
-Requests are spaced by a cross-process rate limiter (`ratelimit.py`), default **3s**,
-overridable with `GALLICA_MIN_REQUEST_INTERVAL`, on top of an in-process semaphore
-limiting concurrency.
+Requests are spaced by a cross-process rate limiter (`ratelimit.py`), default **3s**, overridable with `GALLICA_MIN_REQUEST_INTERVAL`, on top of an in-process semaphore limiting concurrency.
 
-BnF publishes no rate limit for the SRU, ContentSearch or texteBrut endpoints - only a
-policy of open access "except in case of abusive usage" ([api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche)).
-The one published figure covers the IIIF image API, which this client does not use. The 3s
-default follows established Gallica clients such as [bnfimage](https://rekyt.github.io/bnfimage/)
-and [bnf_downloader](https://github.com/yoshimitsuhiro/bnf_downloader), which treat one
-request per three seconds as the threshold above which BnF reads traffic as malicious.
-That figure is community practice rather than official documentation, but the downside is
-asymmetric: exceeding it costs hours of blocked access, while pacing conservatively costs
-seconds.
+BnF publishes no rate limit for the SRU, ContentSearch or texteBrut endpoints - only a policy of open access "except in case of abusive usage" ([api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche)). The one published figure covers the IIIF image API, which this client does not use. The 3s default follows established Gallica clients such as [bnfimage](https://rekyt.github.io/bnfimage/) and [bnf_downloader](https://github.com/yoshimitsuhiro/bnf_downloader), which treat one request per three seconds as the threshold above which BnF reads traffic as malicious. That figure is community practice rather than official documentation, but the downside is asymmetric: exceeding it costs hours of blocked access, while pacing conservatively costs seconds.
 
-**Why cross-process rather than an instance attribute.** An instance attribute was
-adequate while the only caller was a long-lived MCP server. It is not adequate now: every
-CLI invocation is a separate process with its own instance, and callers are expected to
-fan work out across several at once, so an instance attribute paces nothing. The limiter
-keeps its timestamp in `.rate-limit` inside the cache directory, guarded by an exclusive
-`flock`, which every process sharing that cache observes.
+**Why cross-process rather than an instance attribute.** An instance attribute was adequate while the only caller was a long-lived MCP server. It is not adequate now: every CLI invocation is a separate process with its own instance, and callers are expected to fan work out across several at once, so an instance attribute paces nothing. The limiter keeps its timestamp in `.rate-limit` inside the cache directory, guarded by an exclusive `flock`, which every process sharing that cache observes.
 
 ## Caching
 
 - **Cache:** OCR text downloads (large, static files)
 - **Don't cache:** Search results (small, dynamic)
-- **Location:** `$XDG_CACHE_HOME/gallica-mcp/`, resolved by
-  `paths.cache_dir()`; override with `--cache-dir` or `GALLICA_CACHE_DIR`
+- **Location:** `$XDG_CACHE_HOME/gallica-mcp/`, resolved by `paths.cache_dir()`; override with `--cache-dir` or `GALLICA_CACHE_DIR`
 
-The cache must not depend on the working directory: the CLI is installed globally and run
-from whatever project the researcher is in, so a CWD-relative cache would scatter
-downloads and destroy the hit rate.
+The cache must not depend on the working directory: the CLI is installed globally and run from whatever project the researcher is in, so a CWD-relative cache would scatter downloads and destroy the hit rate.
 
 Downloaded text files are cached locally to avoid repeated API calls for the same document. The cache directory is gitignored.
 
@@ -323,30 +302,11 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
 
 ## Gotchas
 
-- **User-Agent is mandatory.** Gallica answers httpx's default `python-httpx/...` agent
-  with `403 Forbidden`. `client.py` sets an explicit `USER_AGENT`; do not remove it.
-- **ContentSearch payloads are escaped twice.** Markup arrives as `&lt;span&gt;` and
-  accents as `&amp;#233;`, so `_clean_snippet()` unescapes, converts the highlight span to
-  `{braces}`, strips remaining markup, then unescapes again.
-- **Date filtering uses `gallicapublication_date`, not `dc.date`.** `dc.date` is a string
-  index: a relational comparison against it either errors or silently matches nothing, so
-  every date-filtered search quietly returned zero results. The working index wants full
-  `YYYY/MM/DD` bounds.
-- **A rejected query returns HTTP 200 with an SRU diagnostic**, not an error status. Left
-  unchecked that reads as "0 results", making a malformed filter indistinguishable from a
-  search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
-- **An anti-bot challenge also returns HTTP 200.** When Gallica decides it is being
-  crawled it serves an ALTCHA "Vérification de sécurité" page, byte-identical whatever
-  document was requested, served with HTTP 200 rather than 429. It was being stripped of
-  markup and cached as the document's text, so every later read returned the challenge
-  instead - silently and permanently. `_is_challenge_page` detects it and `download_text`
-  refuses to cache it. The challenge is valid 24 hours, so a client that hits it should
-  stop rather than retry.
-- **`dc.type périodique` matches nothing** while `collapsing=false` is set, since issues
-  are returned individually as `fascicule`.
-- **A malformed search record raises.** `_parse_record` used to swallow every exception
-  and return None, which dropped the record from the results while the reported total
-  still counted it - a search that silently under-reported. For a tool whose value rests
-  on exhaustivity, a loud failure beats a quiet omission.
-- **An empty result set is one empty page**, `total_pages: 1`. The API implies zero; the
-  client normalises it so callers behave the same here as for any other source.
+- **User-Agent is mandatory.** Gallica answers httpx's default `python-httpx/...` agent with `403 Forbidden`. `client.py` sets an explicit `USER_AGENT`; do not remove it.
+- **ContentSearch payloads are escaped twice.** Markup arrives as `&lt;span&gt;` and accents as `&amp;#233;`, so `_clean_snippet()` unescapes, converts the highlight span to `{braces}`, strips remaining markup, then unescapes again.
+- **Date filtering uses `gallicapublication_date`, not `dc.date`.** `dc.date` is a string index: a relational comparison against it either errors or silently matches nothing, so every date-filtered search quietly returned zero results. The working index wants full `YYYY/MM/DD` bounds.
+- **A rejected query returns HTTP 200 with an SRU diagnostic**, not an error status. Left unchecked that reads as "0 results", making a malformed filter indistinguishable from a search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
+- **An anti-bot challenge also returns HTTP 200.** When Gallica decides it is being crawled it serves an ALTCHA "Vérification de sécurité" page, byte-identical whatever document was requested, served with HTTP 200 rather than 429. It was being stripped of markup and cached as the document's text, so every later read returned the challenge instead - silently and permanently. `_is_challenge_page` detects it and `download_text` refuses to cache it. The challenge is valid 24 hours, so a client that hits it should stop rather than retry.
+- **`dc.type périodique` matches nothing** while `collapsing=false` is set, since issues are returned individually as `fascicule`.
+- **A malformed search record raises.** `_parse_record` used to swallow every exception and return None, which dropped the record from the results while the reported total still counted it - a search that silently under-reported. For a tool whose value rests on exhaustivity, a loud failure beats a quiet omission.
+- **An empty result set is one empty page**, `total_pages: 1`. The API implies zero; the client normalises it so callers behave the same here as for any other source.

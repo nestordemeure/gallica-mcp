@@ -1,7 +1,6 @@
 # Gallica MCP Server
 
-MCP server for [Gallica](https://gallica.bnf.fr/), the digital library of the Bibliothèque nationale de France (BnF).
-Search and access OCR text from millions of digitized documents:
+MCP server for [Gallica](https://gallica.bnf.fr/), the digital library of the Bibliothèque nationale de France (BnF). Search and access OCR text from millions of digitized documents:
 
 - **search_gallica**: Text search with boolean operators (AND, OR, NOT), exact phrase matching with quotes, and parentheses for grouping. Returns paginated results (50 docs/page) with metadata.
 - **get_snippets**: Retrieves text excerpts showing where search terms appear within a specific document. Includes page numbers for each snippet.
@@ -10,10 +9,7 @@ Search and access OCR text from millions of digitized documents:
 
 The search functions convert your inputs into CQL (Contextual Query Language) queries that are sent to Gallica's SRU API.
 
-There are two ways to use it: an **MCP server** for clients that speak MCP, and a
-**`gallica` CLI** for agents driven through a shell. Both share one client, one cache and
-one set of behaviours. The CLI is what the bundled `gallica-search` skill uses, and it
-exposes every filter unconditionally rather than hiding them behind an install flag.
+There are two ways to use it: an **MCP server** for clients that speak MCP, and a **`gallica` CLI** for agents driven through a shell. Both share one client, one cache and one set of behaviours. The CLI is what the bundled `gallica-search` skill uses, and it exposes every filter unconditionally rather than hiding them behind an install flag.
 
 ## Installation
 
@@ -61,9 +57,7 @@ gallica snippets 'ark:/12148/bpt6k55589910' '"Houdini"'        # where it appear
 gallica get 'ark:/12148/bpt6k55589910'                         # cached OCR text path
 ```
 
-Search returns documents without snippets, so the workflow is search → `snippets` to judge
-a document cheaply → `get` only what is worth reading. Boolean operators must be
-UPPERCASE. Add `--json` for machine-readable output.
+Search returns documents without snippets, so the workflow is search → `snippets` to judge a document cheaply → `get` only what is worth reading. Boolean operators must be UPPERCASE. Add `--json` for machine-readable output.
 
 Downloads are cached in `$XDG_CACHE_HOME/gallica-mcp` (override with `--cache-dir` or `GALLICA_CACHE_DIR`). The cache location does not depend on the working directory, so the CLI can be run from anywhere.
 
