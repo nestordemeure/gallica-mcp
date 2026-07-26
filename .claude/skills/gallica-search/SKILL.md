@@ -71,6 +71,17 @@ downloaded — useful for knowing something exists, not for reading it.
   appearances, rather than as many independent sources.
 - **`texte` as document type** is generic and tells you little about the item.
 
+## Traps specific to this source
+
+- **`--type périodique` matches nothing.** Because issues are returned individually rather
+  than collapsed, periodicals appear as `fascicule`. Use that instead.
+- **An anti-bot challenge can arrive as a normal-looking success.** `get` detects it and
+  refuses rather than caching it, but it means you have been querying too fast: stop, and
+  come back later rather than retrying.
+- **`get` can fail on documents that searched fine** — an image-only scan has no OCR to
+  return. That is a property of the document, not an error to retry.
+- Use `--refresh` to replace a cached copy you have reason to distrust.
+
 ## Cost
 
 Rate-limited to one request per second with single concurrency, so sweeps are slow —
@@ -81,3 +92,8 @@ subagents and have them report back with page identifiers and quotes.
 That pacing is shared across every process, so parallel subagents share one budget
 rather than each getting their own. Fanning out widely speeds up the reading, not the
 fetching.
+
+**Over-querying gets you banned, and the ban outlasts the session.** This is a free public
+service; a sweep that looks thorough from here looks like scraping from theirs. If requests
+start failing or returning something that is not what you asked for, stop and say so rather
+than retrying into a longer ban.

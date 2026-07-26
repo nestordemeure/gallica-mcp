@@ -139,9 +139,18 @@ class GallicaClient:
         # Parse XML response
         root = ET.fromstring(response.text)
 
+        # A rejected query comes back as a diagnostic, not an HTTP error. Left
+        # unchecked it reads as "0 results", so a malformed filter looks exactly
+        # like a search that genuinely found nothing.
+        self._raise_for_diagnostics(root, cql_query)
+
         # Extract total number of results
         total_elem = root.find('.//srw:numberOfRecords', self.NAMESPACES)
-        total_results = int(total_elem.text) if total_elem is not None else 0
+        if total_elem is None or total_elem.text is None:
+            raise RuntimeError(
+                f"SRU response carried no record count for query: {cql_query}"
+            )
+        total_results = int(total_elem.text)
 
         # Parse individual records
         documents = []
@@ -162,6 +171,30 @@ class GallicaClient:
             'total_pages': total_pages,
             'documents': documents
         }
+
+    def _raise_for_diagnostics(self, root: ET.Element, cql_query: str) -> None:
+        """Surface an SRU diagnostic as an exception.
+
+        Gallica answers a query it dislikes with HTTP 200 and a diagnostic
+        element rather than an error status, so nothing else would notice.
+        """
+        namespaces = {**self.NAMESPACES, 'diag': 'http://www.loc.gov/zing/srw/diagnostic/'}
+        diagnostics = root.findall('.//diag:diagnostic', namespaces)
+
+        if not diagnostics:
+            return
+
+        details = []
+        for diagnostic in diagnostics:
+            message = diagnostic.find('diag:message', namespaces)
+            detail = diagnostic.find('diag:details', namespaces)
+            parts = [element.text for element in (message, detail) if element is not None]
+            details.append(": ".join(part for part in parts if part))
+
+        raise RuntimeError(
+            f"Gallica rejected the query: {'; '.join(details) or 'unspecified diagnostic'}"
+            f"\nCQL: {cql_query}"
+        )
 
     def _parse_record(self, record: ET.Element) -> dict[str, Any] | None:
         """Parse a single SRU record into document metadata.
@@ -235,11 +268,12 @@ class GallicaClient:
                 f"Could not parse a search result record: {error}"
             ) from error
 
-    async def download_text(self, identifier: str) -> str:
+    async def download_text(self, identifier: str, refresh: bool = False) -> str:
         """Download OCR text for a Gallica document.
 
         Args:
             identifier: Document ARK identifier (e.g., 'ark:/12148/bpt6k5619759j')
+            refresh: Ignore any cached copy and fetch again
 
         Returns:
             Path to the cached text file
@@ -247,12 +281,18 @@ class GallicaClient:
         clean_id = identifier.replace('ark:/', '').replace('/', '_')
 
         cache_file = self.cache_dir / f"{clean_id}.txt"
-        if cache_file.exists():
+        if cache_file.exists() and not refresh:
             return str(cache_file.resolve())
 
         ark_identifier = self._normalize_identifier(identifier)
         html_text = await self._retrieve_texte_brut(ark_identifier)
         plain_text = self._html_to_plain_text(html_text)
+
+        if not plain_text.strip():
+            raise RuntimeError(
+                f"Gallica returned no usable text for {ark_identifier}. Nothing has "
+                "been cached; the document may be image-only."
+            )
 
         cache_file.write_text(plain_text, encoding='utf-8')
         return str(cache_file.resolve())
@@ -401,11 +441,16 @@ class GallicaClient:
             else:
                 parts.append(f'({" or ".join(type_parts)})')
 
-        # Date range
+        # Date range.
+        #
+        # `dc.date` is a string index: relational comparison against it either
+        # errors or silently matches nothing, so a date-filtered search quietly
+        # returned zero results. `gallicapublication_date` is the index that
+        # actually supports ranges, and it wants full YYYY/MM/DD bounds.
         if date_start is not None:
-            parts.append(f'dc.date >= {date_start}')
+            parts.append(f'gallicapublication_date>="{date_start}/01/01"')
         if date_end is not None:
-            parts.append(f'dc.date <= {date_end}')
+            parts.append(f'gallicapublication_date<="{date_end}/12/31"')
 
         # Language
         if language:
@@ -462,6 +507,19 @@ class GallicaClient:
                 continue
 
             if response.status_code == 200 and response.text.strip():
+                # A 200 with a body is not proof of success: when Gallica decides
+                # it is being crawled it serves an anti-bot challenge page with
+                # exactly that shape. Left undetected it gets stripped of markup
+                # and cached as though it were the document's text, so every
+                # later read of that document returns the challenge instead -
+                # silently, and permanently.
+                if self._is_challenge_page(response.text):
+                    raise RuntimeError(
+                        f"Gallica served an anti-bot challenge instead of the text for "
+                        f"{ark_identifier}. Too many requests have been made recently; "
+                        "wait before retrying, and consider raising "
+                        "GALLICA_MIN_REQUEST_INTERVAL."
+                    )
                 return response.text
 
             # If we get a 429 (rate limit), don't try other URLs
@@ -478,6 +536,19 @@ class GallicaClient:
             f"{ark_identifier} (tried: {'; '.join(errors)})"
         )
         raise RuntimeError(error_message)
+
+    @staticmethod
+    def _is_challenge_page(html_text: str) -> bool:
+        """Whether a 200 response is really Gallica's anti-bot interstitial.
+
+        The challenge is byte-identical whatever document was asked for, and
+        carries none of its content, so it must never reach the cache.
+        """
+        head = html_text[:4000].lower()
+        return any(
+            marker in head
+            for marker in ("altcha", "vérification de sécurité", "verification de securite")
+        )
 
     def _build_texte_brut_urls(self, ark_identifier: str) -> list[str]:
         """Generate the common texteBrut URL variants Gallica supports."""

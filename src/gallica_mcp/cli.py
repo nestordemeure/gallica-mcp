@@ -160,6 +160,9 @@ async def run_snippets(args: argparse.Namespace) -> int:
 
     try:
         snippets = await client.get_snippets(identifier=args.identifier, query=args.query)
+    except RuntimeError as error:
+        print(f"{PROGRAM_NAME}: {error}", file=sys.stderr)
+        return 1
     finally:
         await client.close()
 
@@ -189,7 +192,10 @@ async def run_get(args: argparse.Namespace) -> int:
     client = GallicaClient(cache_dir=cache_dir(args.cache_dir))
 
     try:
-        path = await client.download_text(identifier=args.identifier)
+        path = await client.download_text(identifier=args.identifier, refresh=args.refresh)
+    except RuntimeError as error:
+        print(f"{PROGRAM_NAME}: {error}", file=sys.stderr)
+        return 1
     finally:
         await client.close()
 
@@ -280,6 +286,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     get.add_argument("identifier", help="ARK identifier, e.g. ark:/12148/bpt6k5619759j")
+    get.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-download even if a cached copy exists",
+    )
     get.set_defaults(handler=run_get)
 
     return parser
@@ -292,6 +303,9 @@ def main() -> None:
         exit_code = asyncio.run(args.handler(args))
     except KeyboardInterrupt:
         exit_code = 130
+    except RuntimeError as error:
+        print(f"{PROGRAM_NAME}: {error}", file=sys.stderr)
+        exit_code = 1
 
     sys.exit(exit_code)
 

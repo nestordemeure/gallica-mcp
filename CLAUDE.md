@@ -318,6 +318,20 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
 - **ContentSearch payloads are escaped twice.** Markup arrives as `&lt;span&gt;` and
   accents as `&amp;#233;`, so `_clean_snippet()` unescapes, converts the highlight span to
   `{braces}`, strips remaining markup, then unescapes again.
+- **Date filtering uses `gallicapublication_date`, not `dc.date`.** `dc.date` is a string
+  index: a relational comparison against it either errors or silently matches nothing, so
+  every date-filtered search quietly returned zero results. The working index wants full
+  `YYYY/MM/DD` bounds.
+- **A rejected query returns HTTP 200 with an SRU diagnostic**, not an error status. Left
+  unchecked that reads as "0 results", making a malformed filter indistinguishable from a
+  search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
+- **An anti-bot challenge also returns HTTP 200.** When Gallica decides it is being
+  crawled it serves an ALTCHA "Vérification de sécurité" page, byte-identical whatever
+  document was requested. It was being stripped of markup and cached as the document's
+  text, so every later read returned the challenge instead - silently and permanently.
+  `_is_challenge_page` detects it and `download_text` refuses to cache it.
+- **`dc.type périodique` matches nothing** while `collapsing=false` is set, since issues
+  are returned individually as `fascicule`.
 - **A malformed search record raises.** `_parse_record` used to swallow every exception
   and return None, which dropped the record from the results while the reported total
   still counted it - a search that silently under-reported. For a tool whose value rests
