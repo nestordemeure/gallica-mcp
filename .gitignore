@@ -210,3 +210,7 @@ __marimo__/
 /cache
 .claude
 .gemini
+# Keep the data-source skill under version control; ignore the rest of .claude
+!.claude/
+!.claude/skills/
+!.claude/skills/**

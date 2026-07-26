@@ -10,6 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
+gallica = "gallica_mcp.cli:main"
 gallica-mcp = "gallica_mcp.server:main"
 gallica-mcp-install = "gallica_mcp.install:main"
 

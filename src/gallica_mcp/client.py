@@ -9,7 +9,10 @@ from typing import Any
 
 import httpx
 
+from .paths import cache_dir as default_cache_dir
 from .query_parser import build_text_query_clause
+
+USER_AGENT = "gallica-mcp/0.1.0 (historical research tool)"
 
 
 class GallicaClient:
@@ -39,9 +42,15 @@ class GallicaClient:
             max_concurrent_requests: Maximum number of concurrent API requests
             min_request_interval: Minimum delay (seconds) between requests
         """
-        self.cache_dir = cache_dir or Path("cache/gallica")
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else default_cache_dir()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        # Gallica rejects httpx's default "python-httpx/..." agent with 403, so
+        # identify ourselves explicitly.
+        self.client = httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            headers={'User-Agent': USER_AGENT},
+        )
         self._request_semaphore = asyncio.Semaphore(max_concurrent_requests)
         self._rate_limit_lock = asyncio.Lock()
         self._min_request_interval = max(min_request_interval, 0.0)
@@ -278,34 +287,48 @@ class GallicaClient:
                 - page: Page identifier (e.g., "PAG_200" for page 200)
         """
         snippets = []
+        root = ET.fromstring(xml_text)
 
-        try:
-            root = ET.fromstring(xml_text)
+        # Find all content items
+        for item in root.findall('.//item'):
+            content_elem = item.find('content')
+            page_elem = item.find('p_id')
 
-            # Find all content items
-            for item in root.findall('.//item'):
-                content_elem = item.find('content')
-                page_elem = item.find('p_id')
+            if content_elem is not None and content_elem.text:
+                text = self._clean_snippet(content_elem.text)
 
-                if content_elem is not None and content_elem.text:
-                    # Strip HTML tags but keep the text
-                    text = re.sub(r'<[^>]+>', '', content_elem.text)
-                    # Clean up whitespace
-                    text = ' '.join(text.split())
+                # Extract page identifier
+                page_id = page_elem.text if page_elem is not None and page_elem.text else None
 
-                    # Extract page identifier
-                    page_id = page_elem.text if page_elem is not None and page_elem.text else None
-
-                    if text:
-                        snippets.append({
-                            'text': text,
-                            'page': page_id
-                        })
-
-        except Exception:
-            pass
+                if text:
+                    snippets.append({
+                        'text': text,
+                        'page': page_id
+                    })
 
         return snippets
+
+    @staticmethod
+    def _clean_snippet(raw: str) -> str:
+        """Turn a ContentSearch <content> payload into readable text.
+
+        The payload is escaped twice: markup arrives as ``&lt;span&gt;`` and
+        accented characters as ``&amp;#233;``. Unescaping once exposes the
+        markup, which carries a highlight span around each match; that span is
+        converted to braces because knowing which token matched is how a reader
+        spots substring false positives. A second unescape then resolves the
+        remaining character entities.
+        """
+        text = unescape(raw)
+        text = re.sub(
+            r"<span[^>]*class=['\"]?highlight['\"]?[^>]*>(.*?)</span>",
+            r'{\1}',
+            text,
+            flags=re.DOTALL,
+        )
+        text = re.sub(r'<[^>]+>', '', text)
+        text = unescape(text)
+        return ' '.join(text.split())
 
     def _build_cql_query(
         self,

@@ -10,12 +10,23 @@ Search and access OCR text from millions of digitized documents:
 
 The search functions convert your inputs into CQL (Contextual Query Language) queries that are sent to Gallica's SRU API.
 
+There are two ways to use it: an **MCP server** for clients that speak MCP, and a
+**`gallica` CLI** for agents driven through a shell. Both share one client, one cache and
+one set of behaviours. The CLI is what the bundled `gallica-search` skill uses, and it
+exposes every filter unconditionally rather than hiding them behind an install flag.
+
 ## Installation
 
 ### Install the code
 
 ```bash
 uv sync
+```
+
+### Install the CLI
+
+```bash
+uv tool install .        # puts `gallica` on your PATH
 ```
 
 ### Install to MCP CLIs
@@ -39,6 +50,26 @@ gemini mcp list   # For Gemini CLI
 ```
 
 ## Usage
+
+### CLI
+
+```bash
+gallica search '"Bert Reese"'                                  # first page of results
+gallica search '"prestidigitation" OR "magic"' --pages all     # sweep everything
+gallica search 'Houdini' --type monographie --from-year 1900 --to-year 1930
+gallica snippets 'ark:/12148/bpt6k55589910' '"Bert Reese"'     # where it appears
+gallica get 'ark:/12148/bpt6k55589910'                         # cached OCR text path
+```
+
+Search returns documents without snippets, so the workflow is search → `snippets` to judge
+a document cheaply → `get` only what is worth reading. Boolean operators must be
+UPPERCASE. Add `--json` for machine-readable output.
+
+Downloads are cached in `$XDG_CACHE_HOME/mentalism-research/gallica` (override with
+`--cache-dir` or `GALLICA_CACHE_DIR`). The cache location does not depend on the working
+directory, so the CLI can be run from anywhere.
+
+### MCP server
 
 Run the server directly:
 

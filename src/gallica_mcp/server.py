@@ -2,7 +2,6 @@
 
 import argparse
 import sys
-from pathlib import Path
 
 from mcp import Resource
 from mcp.server.fastmcp import FastMCP
@@ -10,8 +9,10 @@ from mcp.server.fastmcp import FastMCP
 # Handle both direct execution and package import
 try:
     from .client import GallicaClient
+    from .paths import cache_dir
 except ImportError:
     from gallica_mcp.client import GallicaClient
+    from gallica_mcp.paths import cache_dir
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Gallica MCP Server')
@@ -36,8 +37,7 @@ def get_client() -> GallicaClient:
     """Get or create the global Gallica client."""
     global _client
     if _client is None:
-        cache_dir = Path("cache/gallica")
-        _client = GallicaClient(cache_dir=cache_dir)
+        _client = GallicaClient(cache_dir=cache_dir())
     return _client
 
 

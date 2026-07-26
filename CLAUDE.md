@@ -19,16 +19,23 @@ MCP server for searching and retrieving documents from Gallica, the digital libr
 
 ```
 gallica-mcp/
-├── cache/                   # Downloaded OCR text (gitignored)
-│   └── gallica/
+├── .claude/skills/gallica-search/   # Skill documenting the CLI
 ├── src/gallica_mcp/
 │   ├── __init__.py
 │   ├── client.py           # API client + caching
+│   ├── cli.py              # `gallica` command-line interface
+│   ├── paths.py            # Cache location resolution
+│   ├── query_parser.py     # CQL query construction
 │   ├── server.py           # FastMCP tools
-│   └── install.py          # CLI installer
+│   └── install.py          # MCP server installer
 ├── pyproject.toml
 └── CLAUDE.md               # This file
 ```
+
+`client.py` holds all the behaviour; `server.py` and `cli.py` are thin presentation layers
+over it, so search semantics and caching stay identical no matter how it is called. The
+CLI exposes every filter unconditionally, where the MCP server hides them behind
+`--enable-advanced-search`.
 
 ## API Details
 
@@ -247,7 +254,12 @@ The client automatically builds CQL queries from the parameters:
 
 - **Cache:** OCR text downloads (large, static files)
 - **Don't cache:** Search results (small, dynamic)
-- **Location:** `cache/gallica/`
+- **Location:** `$XDG_CACHE_HOME/mentalism-research/gallica/`, resolved by
+  `paths.cache_dir()`; override with `--cache-dir` or `GALLICA_CACHE_DIR`
+
+The cache must not depend on the working directory: the CLI is installed globally and run
+from whatever project the researcher is in, so a CWD-relative cache would scatter
+downloads and destroy the hit rate.
 
 Downloaded text files are cached locally to avoid repeated API calls for the same document. The cache directory is gitignored.
 
@@ -285,3 +297,13 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
 - All text is UTF-8 encoded
 - Search results include all individual periodical issues (not collapsed)
 - Use `get_snippets` to fetch text excerpts for specific documents after searching
+
+## Gotchas
+
+- **User-Agent is mandatory.** Gallica answers httpx's default `python-httpx/...` agent
+  with `403 Forbidden`. `client.py` sets an explicit `USER_AGENT`; do not remove it.
+- **ContentSearch payloads are escaped twice.** Markup arrives as `&lt;span&gt;` and
+  accents as `&amp;#233;`, so `_clean_snippet()` unescapes, converts the highlight span to
+  `{braces}`, strips remaining markup, then unescapes again.
+- **Empty result sets report `total_pages: 0`**, not 1, unlike the other sources. Callers
+  that loop over pages must still report the first page or an empty search prints nothing.
