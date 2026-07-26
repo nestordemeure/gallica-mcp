@@ -116,20 +116,14 @@ async def run_search(args: argparse.Namespace) -> int:
             total_pages = result["total_pages"]
             documents = result["documents"]
 
-            # Gallica reports 0 pages for an empty result set; still report the
-            # first page asked for, so "no matches" is stated rather than implied
-            # by silence.
-            if page > total_pages and page > args.pages.first:
+            if page > total_pages:
                 break
 
             if args.json:
                 collected.extend(documents)
             else:
                 label = args.query or "(filters only)"
-                print(
-                    f"# {label} — {total_results} results, "
-                    f"page {page} of {max(total_pages, 1)}"
-                )
+                print(f"# {label} — {total_results} results, page {page} of {total_pages}")
                 if not documents:
                     print("  (no documents on this page)")
                 for offset, document in enumerate(documents):
@@ -211,7 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cache-dir",
         default=None,
-        help="override the download cache location (default: $XDG_CACHE_HOME/mentalism-research/gallica)",
+        help="override the download cache location (default: $XDG_CACHE_HOME/gallica-mcp)",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

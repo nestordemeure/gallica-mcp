@@ -49,7 +49,7 @@ CLI exposes every filter unconditionally, where the MCP server hides them behind
 **ContentSearch API:**
 - Base URL: `https://gallica.bnf.fr/services/ContentSearch`
 - Returns text snippets with search terms highlighted
-- Used by the `get_snippets` tool (requests go through the global rate limiter: default 1 req/sec, single concurrency)
+- Used by the `get_snippets` tool (requests go through the rate limiter: default 1 req/sec, single concurrency)
 
 **Text Retrieval:**
 - Plain text: `https://gallica.bnf.fr/[ark].texteBrut`
@@ -250,11 +250,24 @@ The client automatically builds CQL queries from the parameters:
 - All filters are combined with AND logic
 - SRU parameter `exactSearch` controls fuzzy matching behavior
 
+## Rate Limiting
+
+Requests are spaced by a cross-process rate limiter (`ratelimit.py`), default 1s,
+overridable with `GALLICA_MIN_REQUEST_INTERVAL`, on top of an in-process semaphore
+limiting concurrency.
+
+**Why cross-process rather than an instance attribute.** An instance attribute was
+adequate while the only caller was a long-lived MCP server. It is not adequate now: every
+CLI invocation is a separate process with its own instance, and callers are expected to
+fan work out across several at once, so an instance attribute paces nothing. The limiter
+keeps its timestamp in `.rate-limit` inside the cache directory, guarded by an exclusive
+`flock`, which every process sharing that cache observes.
+
 ## Caching
 
 - **Cache:** OCR text downloads (large, static files)
 - **Don't cache:** Search results (small, dynamic)
-- **Location:** `$XDG_CACHE_HOME/mentalism-research/gallica/`, resolved by
+- **Location:** `$XDG_CACHE_HOME/gallica-mcp/`, resolved by
   `paths.cache_dir()`; override with `--cache-dir` or `GALLICA_CACHE_DIR`
 
 The cache must not depend on the working directory: the CLI is installed globally and run
@@ -305,5 +318,9 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
 - **ContentSearch payloads are escaped twice.** Markup arrives as `&lt;span&gt;` and
   accents as `&amp;#233;`, so `_clean_snippet()` unescapes, converts the highlight span to
   `{braces}`, strips remaining markup, then unescapes again.
-- **Empty result sets report `total_pages: 0`**, not 1, unlike the other sources. Callers
-  that loop over pages must still report the first page or an empty search prints nothing.
+- **A malformed search record raises.** `_parse_record` used to swallow every exception
+  and return None, which dropped the record from the results while the reported total
+  still counted it - a search that silently under-reported. For a tool whose value rests
+  on exhaustivity, a loud failure beats a quiet omission.
+- **An empty result set is one empty page**, `total_pages: 1`. The API implies zero; the
+  client normalises it so callers behave the same here as for any other source.

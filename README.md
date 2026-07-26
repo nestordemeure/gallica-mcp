@@ -54,10 +54,10 @@ gemini mcp list   # For Gemini CLI
 ### CLI
 
 ```bash
-gallica search '"Bert Reese"'                                  # first page of results
+gallica search '"Harry Houdini"'                               # first page of results
 gallica search '"prestidigitation" OR "magic"' --pages all     # sweep everything
 gallica search 'Houdini' --type monographie --from-year 1900 --to-year 1930
-gallica snippets 'ark:/12148/bpt6k55589910' '"Bert Reese"'     # where it appears
+gallica snippets 'ark:/12148/bpt6k55589910' '"Houdini"'        # where it appears
 gallica get 'ark:/12148/bpt6k55589910'                         # cached OCR text path
 ```
 
@@ -65,7 +65,7 @@ Search returns documents without snippets, so the workflow is search → `snippe
 a document cheaply → `get` only what is worth reading. Boolean operators must be
 UPPERCASE. Add `--json` for machine-readable output.
 
-Downloads are cached in `$XDG_CACHE_HOME/mentalism-research/gallica` (override with
+Downloads are cached in `$XDG_CACHE_HOME/gallica-mcp` (override with
 `--cache-dir` or `GALLICA_CACHE_DIR`). The cache location does not depend on the working
 directory, so the CLI can be run from anywhere.
 

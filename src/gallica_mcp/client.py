@@ -11,6 +11,7 @@ import httpx
 
 from .paths import cache_dir as default_cache_dir
 from .query_parser import build_text_query_clause
+from .ratelimit import CrossProcessRateLimiter, configured_interval
 
 USER_AGENT = "gallica-mcp/0.1.0 (historical research tool)"
 
@@ -33,14 +34,15 @@ class GallicaClient:
         self,
         cache_dir: Path | None = None,
         max_concurrent_requests: int = 1,
-        min_request_interval: float = 1.0
+        min_request_interval: float | None = None
     ):
         """Initialize Gallica client.
 
         Args:
             cache_dir: Directory for caching downloaded text files
             max_concurrent_requests: Maximum number of concurrent API requests
-            min_request_interval: Minimum delay (seconds) between requests
+            min_request_interval: Minimum delay (seconds) between requests;
+                defaults to the configured interval
         """
         self.cache_dir = Path(cache_dir) if cache_dir is not None else default_cache_dir()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -52,9 +54,16 @@ class GallicaClient:
             headers={'User-Agent': USER_AGENT},
         )
         self._request_semaphore = asyncio.Semaphore(max_concurrent_requests)
-        self._rate_limit_lock = asyncio.Lock()
-        self._min_request_interval = max(min_request_interval, 0.0)
-        self._last_request_time = 0.0
+        # Spacing is shared with every other process using this cache: an
+        # instance attribute paces nothing once each CLI call is its own process.
+        self._rate_limiter = CrossProcessRateLimiter(
+            state_file=self.cache_dir / ".rate-limit",
+            min_interval=(
+                min_request_interval
+                if min_request_interval is not None
+                else configured_interval()
+            ),
+        )
 
     async def close(self):
         """Close the HTTP client."""
@@ -143,8 +152,9 @@ class GallicaClient:
             if doc:
                 documents.append(doc)
 
-        # Calculate total pages
-        total_pages = (total_results + records_per_page - 1) // records_per_page if total_results > 0 else 0
+        # An empty result set is one empty page, not zero pages, so that callers
+        # looping over pages behave the same here as for any other source.
+        total_pages = max(1, (total_results + records_per_page - 1) // records_per_page)
 
         return {
             'page': page,
@@ -171,7 +181,10 @@ class GallicaClient:
             # Get Dublin Core metadata
             dc_elem = record.find('.//oai_dc:dc', self.NAMESPACES)
             if dc_elem is None:
-                return None
+                raise RuntimeError(
+                    "SRU record carried no oai_dc metadata; the response format "
+                    "may have changed"
+                )
 
             # Extract identifier (ARK)
             identifier_elem = dc_elem.find('dc:identifier', self.NAMESPACES)
@@ -213,8 +226,14 @@ class GallicaClient:
                 'type': doc_type,
                 'language': language
             }
-        except Exception:
-            return None
+        except (AttributeError, KeyError, TypeError) as error:
+            # Returning None here would drop the record from the result set while
+            # the reported total still counted it, silently under-reporting a
+            # search. For a tool whose value rests on exhaustivity, a loud
+            # failure beats a quiet omission.
+            raise RuntimeError(
+                f"Could not parse a search result record: {error}"
+            ) from error
 
     async def download_text(self, identifier: str) -> str:
         """Download OCR text for a Gallica document.
@@ -417,18 +436,8 @@ class GallicaClient:
             return response
 
     async def _wait_for_request_slot(self) -> None:
-        """Ensure minimum spacing between outbound requests."""
-        if self._min_request_interval <= 0:
-            return
-
-        async with self._rate_limit_lock:
-            loop = asyncio.get_running_loop()
-            now = loop.time()
-            wait_time = self._min_request_interval - (now - self._last_request_time)
-            if wait_time > 0:
-                await asyncio.sleep(wait_time)
-                now = loop.time()
-            self._last_request_time = now
+        """Ensure minimum spacing between outbound requests, across processes."""
+        await self._rate_limiter.acquire()
 
     def _normalize_identifier(self, identifier: str) -> str:
         """Ensure identifier is an ark:/... string recognized by Gallica."""

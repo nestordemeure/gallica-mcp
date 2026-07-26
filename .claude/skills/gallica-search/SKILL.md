@@ -75,5 +75,9 @@ downloaded — useful for knowing something exists, not for reading it.
 
 Rate-limited to one request per second with single concurrency, so sweeps are slow —
 budget for it on large result sets. Downloads are cached under
-`$XDG_CACHE_HOME/mentalism-research/gallica`. When reading many documents, dispatch
+`$XDG_CACHE_HOME/gallica-mcp`. When reading many documents, dispatch
 subagents and have them report back with page identifiers and quotes.
+
+That pacing is shared across every process, so parallel subagents share one budget
+rather than each getting their own. Fanning out widely speeds up the reading, not the
+fetching.
