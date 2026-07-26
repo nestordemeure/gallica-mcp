@@ -6,8 +6,14 @@ invocation is a separate process with its own limiter, and callers are expected
 to fan work out across several at once. Pacing therefore has to live somewhere
 both processes can see - a small state file guarded by an exclusive lock.
 
-Gallica throttles aggressively and answers with 429; one request per second
-keeps well clear.
+BnF publishes no rate limit for the SRU, ContentSearch and texteBrut endpoints,
+only a policy of open access "except in case of abusive usage". Established
+Gallica clients settle on one request every three seconds as the threshold above
+which BnF starts treating traffic as malicious, so that is the default here.
+
+Exceeding it does not produce a 429. Gallica answers HTTP 200 with an ALTCHA
+"Vérification de sécurité" challenge page, and the resulting block is measured in
+hours - so pacing conservatively costs far less than being wrong.
 
 Unix only; `fcntl` has no Windows equivalent here.
 """
@@ -20,7 +26,7 @@ import os
 import time
 from pathlib import Path
 
-DEFAULT_MIN_INTERVAL_SECONDS = 1.0
+DEFAULT_MIN_INTERVAL_SECONDS = 3.0
 MIN_INTERVAL_ENV_VAR = "GALLICA_MIN_REQUEST_INTERVAL"
 
 

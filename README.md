@@ -65,9 +65,9 @@ Search returns documents without snippets, so the workflow is search → `snippe
 a document cheaply → `get` only what is worth reading. Boolean operators must be
 UPPERCASE. Add `--json` for machine-readable output.
 
-Downloads are cached in `$XDG_CACHE_HOME/gallica-mcp` (override with
-`--cache-dir` or `GALLICA_CACHE_DIR`). The cache location does not depend on the working
-directory, so the CLI can be run from anywhere.
+Downloads are cached in `$XDG_CACHE_HOME/gallica-mcp` (override with `--cache-dir` or `GALLICA_CACHE_DIR`). The cache location does not depend on the working directory, so the CLI can be run from anywhere.
+
+Requests are paced one every 3 seconds by default, matching what established Gallica clients use; BnF publishes no limit for these endpoints but blocks traffic it considers abusive, serving an ALTCHA challenge page instead of results. Override with `GALLICA_MIN_REQUEST_INTERVAL` if you know what you are doing.
 
 ### MCP server
 

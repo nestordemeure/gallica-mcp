@@ -252,9 +252,19 @@ The client automatically builds CQL queries from the parameters:
 
 ## Rate Limiting
 
-Requests are spaced by a cross-process rate limiter (`ratelimit.py`), default 1s,
+Requests are spaced by a cross-process rate limiter (`ratelimit.py`), default **3s**,
 overridable with `GALLICA_MIN_REQUEST_INTERVAL`, on top of an in-process semaphore
 limiting concurrency.
+
+BnF publishes no rate limit for the SRU, ContentSearch or texteBrut endpoints - only a
+policy of open access "except in case of abusive usage" ([api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche)).
+The one published figure covers the IIIF image API, which this client does not use. The 3s
+default follows established Gallica clients such as [bnfimage](https://rekyt.github.io/bnfimage/)
+and [bnf_downloader](https://github.com/yoshimitsuhiro/bnf_downloader), which treat one
+request per three seconds as the threshold above which BnF reads traffic as malicious.
+That figure is community practice rather than official documentation, but the downside is
+asymmetric: exceeding it costs hours of blocked access, while pacing conservatively costs
+seconds.
 
 **Why cross-process rather than an instance attribute.** An instance attribute was
 adequate while the only caller was a long-lived MCP server. It is not adequate now: every
@@ -327,9 +337,11 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
   search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
 - **An anti-bot challenge also returns HTTP 200.** When Gallica decides it is being
   crawled it serves an ALTCHA "Vérification de sécurité" page, byte-identical whatever
-  document was requested. It was being stripped of markup and cached as the document's
-  text, so every later read returned the challenge instead - silently and permanently.
-  `_is_challenge_page` detects it and `download_text` refuses to cache it.
+  document was requested, served with HTTP 200 rather than 429. It was being stripped of
+  markup and cached as the document's text, so every later read returned the challenge
+  instead - silently and permanently. `_is_challenge_page` detects it and `download_text`
+  refuses to cache it. The challenge is valid 24 hours, so a client that hits it should
+  stop rather than retry.
 - **`dc.type périodique` matches nothing** while `collapsing=false` is set, since issues
   are returned individually as `fascicule`.
 - **A malformed search record raises.** `_parse_record` used to swallow every exception

@@ -75,17 +75,23 @@ downloaded — useful for knowing something exists, not for reading it.
 
 - **`--type périodique` matches nothing.** Because issues are returned individually rather
   than collapsed, periodicals appear as `fascicule`. Use that instead.
-- **An anti-bot challenge can arrive as a normal-looking success.** `get` detects it and
-  refuses rather than caching it, but it means you have been querying too fast: stop, and
-  come back later rather than retrying.
+- **An anti-bot challenge can arrive as a normal-looking success** — HTTP 200 carrying an
+  ALTCHA "Vérification de sécurité" page rather than a 429. `get` detects it and refuses
+  rather than caching it. If you see it, you have been querying too fast: **stop querying
+  Gallica entirely and tell the user**. The block is measured in hours, not minutes, so
+  retrying makes it worse and there is nothing to be gained by trying again in this
+  session.
 - **`get` can fail on documents that searched fine** — an image-only scan has no OCR to
   return. That is a property of the document, not an error to retry.
 - Use `--refresh` to replace a cached copy you have reason to distrust.
 
 ## Cost
 
-Rate-limited to one request per second with single concurrency, so sweeps are slow —
-budget for it on large result sets. Downloads are cached under
+Rate-limited to **one request every three seconds** with single concurrency, so sweeps are
+slow: 50 results per page means a 20-page sweep costs a minute of waiting before any
+reading starts. Budget for that, and prefer narrowing the query to sweeping a huge result
+set. BnF publishes no limit for these endpoints, but established Gallica clients treat 3s
+as the point above which traffic is read as malicious. Downloads are cached under
 `$XDG_CACHE_HOME/gallica-mcp`. When reading many documents, dispatch
 subagents and have them report back with page identifiers and quotes.
 
