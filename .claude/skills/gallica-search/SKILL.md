@@ -7,8 +7,6 @@ description: Search Gallica, the Bibliothèque nationale de France digital libra
 
 The BnF's digital library: French newspapers, periodicals, books and manuscripts, plus a run of English-language titles such as the Paris edition of the *New York Herald*. The place to look for European press coverage of performers who toured the Continent.
 
-> Gallica support is newer than the other sources. Sanity-check its results rather than assuming they are complete.
-
 ## Commands
 
 ```sh
