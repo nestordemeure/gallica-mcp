@@ -65,6 +65,8 @@ Downloads are cached in `$XDG_CACHE_HOME/gallica-mcp` (override with `--cache-di
 
 Requests are paced one every 3 seconds by default, matching what established Gallica clients use; BnF publishes no limit for these endpoints but blocks traffic it considers abusive, serving an ALTCHA challenge page instead of results. Override with `GALLICA_MIN_REQUEST_INTERVAL` if you know what you are doing.
 
+**`get` is the expensive call.** The pacing treats all three endpoints alike, but BnF does not: `texteBrut` downloads are guarded harder than search, are the first thing to be refused, and are the last to start working again — search recovering does not mean downloads have. Budget in documents downloaded rather than requests issued, and use `snippets` to decide a document is worth reading before spending a download on it.
+
 ### MCP server
 
 Run the server directly:
