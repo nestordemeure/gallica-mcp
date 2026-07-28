@@ -50,14 +50,16 @@ gemini mcp list   # For Gemini CLI
 ### CLI
 
 ```bash
-gallica search '"Harry Houdini"'                               # first page of results
-gallica search '"prestidigitation" OR "magic"' --pages all     # sweep everything
+gallica search '"Harry Houdini"'                               # first page, best matches first
 gallica search 'Houdini' --type monographie --from-year 1900 --to-year 1930
+gallica search 'Houdini' --from-year 1900 --to-year 1905 --sort date_asc --pages all
 gallica snippets 'ark:/12148/bpt6k55589910' '"Houdini"'        # where it appears
 gallica get 'ark:/12148/bpt6k55589910'                         # cached OCR text path
 ```
 
 Search returns documents without snippets, so the workflow is search → `snippets` to judge a document cheaply → `get` only what is worth reading. Boolean operators must be UPPERCASE. Add `--json` for machine-readable output.
+
+**Results are ordered by relevance, and that matters more than it sounds.** Gallica's text index ranks rather than filters: a phrase search reports a long tail of loosely related documents, so `"Robert-Houdin"` claims ~125,000 results while only the first page or two are actually about him. Treat the total as a ranking depth, not a count of matches. `--sort date_asc`/`date_desc` are available for chronological work, but they are worth using only on a query narrowed by filters until its total is plausible — on a broad query they bury the good material.
 
 Downloads are cached in `$XDG_CACHE_HOME/gallica-mcp` (override with `--cache-dir` or `GALLICA_CACHE_DIR`). The cache location does not depend on the working directory, so the CLI can be run from anywhere.
 

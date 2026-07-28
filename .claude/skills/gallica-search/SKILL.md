@@ -10,16 +10,18 @@ The BnF's digital library: French newspapers, periodicals, books and manuscripts
 ## Commands
 
 ```sh
-gallica search "<query>" [--pages N|N-M|all] [filters] [--json]
+gallica search "<query>" [--pages N|N-M|all] [--sort ORDER] [filters] [--json]
 gallica snippets <ark> "<query>"   # where the query appears inside one document
 gallica get <ark>                  # download OCR text, prints path to the cached file
 ```
 
 Filters for `search`: `--creator NAME` (repeatable), `--type TYPE` (repeatable, from `monographie`, `périodique`, `fascicule`, `manuscrit`, `image`, `carte`, `partition`), `--from-year`, `--to-year`, `--language CODE` (ISO 639-2: `fre`, `eng`, `ger`…), `--title TEXT`, `--include-restricted`, `--fuzzy`.
 
+`--sort` takes `relevance` (default), `date_asc` or `date_desc`.
+
 **Search returns no snippets.** This is the important workflow difference: `search` gives you documents, then `snippets` tells you whether a given document is actually worth anything, and only then does `get` download it. Going straight from search to `get` wastes a large download on documents that hold a single passing mention.
 
-`snippets` marks matched terms in `{braces}` and reports a page identifier such as `PAG_30` for each occurrence.
+`snippets` marks matched terms in `{braces}` and reports a page identifier such as `PAG_30` for each occurrence. Its excerpts run to a sentence or two of real context, not a few words, so they are frequently enough to judge *and* to quote in a report without downloading anything.
 
 ## Query syntax
 
@@ -32,15 +34,30 @@ Matching is exact by default. `--fuzzy` finds OCR errors and spelling variants b
 
 **Search in French, or in both languages.** The collection is French-dominant, so an English-only query will miss most of what is there: `"prestidigitation" OR "magic"`, `"lecture de pensée" OR "mind reading"`, `"voyant" OR "clairvoyant"`. Names usually carry across unchanged, but titles and honorifics do not — French press writes "le professeur Reese", not "Prof. Reese".
 
+## The result count is not what you think it is
+
+**Gallica ranks, it does not filter.** `text adj` scores documents rather than restricting to those containing the phrase, so the reported total is a relevance tail, not a set of matches. `"Robert-Houdin"` reports **124,709 results**. The first three are his own *Album des soirées fantastiques*, a Théâtre Robert-Houdin programme, and a satirical paper reviewing him; by result fifty you are into documents with no connection to him at all.
+
+Three consequences, and they govern how this source is used:
+
+- **Never quote the total as a finding.** "124,709 mentions of Robert-Houdin in the French press" is not true and would be a serious error in a report. It is a ranking depth, not a count.
+- **Relevance ordering is what makes the source work.** It is the default. The material worth reading is in the first page or two, and it is genuinely good material.
+- **`--pages all` is almost never right here.** On a ranked tail it sweeps tens of thousands of non-matches, costs hours at 3s a request, and invites a ban. Narrow the query with filters until the total is plausible, *then* consider sweeping.
+
+Use `--sort date_asc` only once a query is narrowed enough that you intend to read the whole result set — a chronological reconstruction over a bounded date range, say. On an un-narrowed query, date order buries the good material behind thousands of weak matches, which is exactly the wrong thing to hand a researcher.
+
 ## Being exhaustive
 
-50 results per page — half the other sources, so page counts run higher. `--pages all` sweeps everything. Periodical issues are returned individually rather than collapsed by title, so a single newspaper's coverage appears as many separate dated results; that is correct, and it is what makes date-ordered reconstruction possible.
+50 results per page — half the other sources, so page counts run higher. Periodical issues are returned individually rather than collapsed by title, so a single newspaper's coverage appears as many separate dated results; that is correct, and it is what makes date-ordered reconstruction possible.
+
+Exhaustivity on Gallica means *a well-bounded query swept completely*, not a broad query swept deeply. Bound it with `--from-year`/`--to-year`, `--language`, `--type` or `--title` first.
 
 By default only public-domain documents with downloadable OCR are returned. `--include-restricted` widens the net, but the extra results generally cannot be downloaded — useful for knowing something exists, not for reading it.
 
 ## False positives to expect
 
-- **French OCR mangles accents**, and 19th-century typography compounds it. Names lose diacritics or gain them spuriously.
+- **French OCR mangles accents**, and 19th-century typography compounds it. Names lose diacritics or gain them spuriously. A single document's snippets gave *Robert-Boudin*, *Robert-Hoiïdin*, *Robert-Houdm* and *ROBERT-HOUSXK* alongside the correct spelling — all on pages that genuinely concern him. Expect the mis-scans to be the reason a name looks under-represented, and reach for `--fuzzy` when a search is suspiciously thin.
+- **Hyphenated names are two tokens.** Snippets highlight `{Robert}-{Houdin}` as a separate pair, so a hyphenated name is matched loosely and drags in documents holding only the common half. This is a large part of why totals run so high.
 - **Name fragments**, as everywhere: check the `{braces}` in the snippet output.
 - **The same wire story reprinted across dozens of papers.** Gallica will return each reprint separately. Recognise repeats and report them as one story with many appearances, rather than as many independent sources.
 - **`texte` as document type** is generic and tells you little about the item.
@@ -49,7 +66,9 @@ By default only public-domain documents with downloadable OCR are returned. `--i
 
 - **`--type périodique` matches nothing.** Because issues are returned individually rather than collapsed, periodicals appear as `fascicule`. Use that instead.
 - **An anti-bot challenge can arrive as a normal-looking success** — HTTP 200 carrying an ALTCHA "Vérification de sécurité" page rather than a 429. `get` detects it and refuses rather than caching it. If you see it, you have been querying too fast: **stop querying Gallica entirely and tell the user**. The block is measured in hours, not minutes, so retrying makes it worse and there is nothing to be gained by trying again in this session.
-- **`get` can fail on documents that searched fine** — an image-only scan has no OCR to return. That is a property of the document, not an error to retry.
+- **`get` is the fragile command, and it is the first to be refused.** Downloads come from a different endpoint (`texteBrut`) to search and snippets, and it is guarded harder: in testing, search and `snippets` kept answering normally on a document whose `get` came back as a challenge page. So a failing `get` does not mean you are safely under the limit elsewhere — it is the earliest warning you are over it. Treat it as the signal to stop, not as one command to work around.
+- **`get` can also fail on documents that searched fine** — an image-only scan has no OCR to return. That is a property of the document, not an error to retry. A challenge page says so explicitly; a document with no text does not.
+- **Prefer `snippets` over `get` far more than on other sources.** Snippets are cheap, quote generously, and carry page identifiers, which is often the whole deliverable: a researcher wants `PAG_33` of a named document, not a megabyte of OCR. Reach for `get` only when a document warrants reading at length.
 - Use `--refresh` to replace a cached copy you have reason to distrust.
 
 ## Cost

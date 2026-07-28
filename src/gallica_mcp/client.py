@@ -15,6 +15,17 @@ from .ratelimit import CrossProcessRateLimiter, configured_interval
 
 USER_AGENT = "gallica-mcp/0.1.0 (historical research tool)"
 
+# Result ordering. The names match the other archive clients; the values are the
+# CQL suffix each one appends. Relevance is Gallica's own default, expressed by
+# omitting `sortby` entirely rather than by naming a relevance key.
+SORT_CLAUSES = {
+    "relevance": "",
+    "date_asc": " sortby dc.date/sort.ascending",
+    "date_desc": " sortby dc.date/sort.descending",
+}
+SORT_ORDERS = tuple(SORT_CLAUSES)
+DEFAULT_SORT = "relevance"
+
 
 class GallicaClient:
     """Client for interacting with Gallica API."""
@@ -81,7 +92,8 @@ class GallicaClient:
         language: str | None = None,
         title: str | None = None,
         public_domain_only: bool = True,
-        exact_search: bool = True
+        exact_search: bool = True,
+        sort: str = DEFAULT_SORT
     ) -> dict[str, Any]:
         """Search Gallica using the SRU protocol.
 
@@ -97,6 +109,7 @@ class GallicaClient:
             title: Text to search in titles
             public_domain_only: Restrict to public domain documents with freely downloadable OCR (default True)
             exact_search: Use exact matching (default True). When True, disables fuzzy matching.
+            sort: Result ordering, one of SORT_ORDERS (default relevance)
 
         Returns:
             Dictionary containing:
@@ -113,7 +126,8 @@ class GallicaClient:
             date_end=date_end,
             language=language,
             title=title,
-            public_domain_only=public_domain_only
+            public_domain_only=public_domain_only,
+            sort=sort
         )
 
         # Calculate startRecord (SRU uses 1-based indexing)
@@ -398,7 +412,8 @@ class GallicaClient:
         date_end: int | None = None,
         language: str | None = None,
         title: str | None = None,
-        public_domain_only: bool = True
+        public_domain_only: bool = True,
+        sort: str = DEFAULT_SORT
     ) -> str:
         """Build a CQL query from search parameters.
 
@@ -411,10 +426,16 @@ class GallicaClient:
             language: Language code
             title: Text to search in titles
             public_domain_only: Restrict to public domain documents
+            sort: One of SORT_ORDERS
 
         Returns:
             CQL query string
         """
+        if sort not in SORT_CLAUSES:
+            raise ValueError(
+                f"Unknown sort order {sort!r}; expected one of {', '.join(SORT_ORDERS)}"
+            )
+
         parts = []
 
         # Text search in OCR content
@@ -467,7 +488,17 @@ class GallicaClient:
             # Join all parts with AND
             cql = ' and '.join(parts)
 
-        return f'{cql} sortby dc.date/sort.ascending'
+        # Ordering.
+        #
+        # Gallica's `text adj` is a ranked match rather than a strict filter: a
+        # phrase search reports six-figure totals whose tail is barely related.
+        # Relevance ordering is therefore what makes the source usable at all —
+        # the material worth reading sits in the first page or two. Sorting by
+        # date instead buries it behind thousands of weak matches, so date order
+        # is for bounded sweeps (a filtered range you intend to read whole),
+        # never for exploring a large result set.
+        suffix = SORT_CLAUSES[sort]
+        return f'{cql}{suffix}'
 
     def _build_text_clause(self, query: str) -> str:
         """Normalize a user text query into a valid CQL clause."""

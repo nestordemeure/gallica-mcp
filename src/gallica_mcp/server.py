@@ -8,10 +8,10 @@ from mcp.server.fastmcp import FastMCP
 
 # Handle both direct execution and package import
 try:
-    from .client import GallicaClient
+    from .client import DEFAULT_SORT, GallicaClient
     from .paths import cache_dir
 except ImportError:
-    from gallica_mcp.client import GallicaClient
+    from gallica_mcp.client import DEFAULT_SORT, GallicaClient
     from gallica_mcp.paths import cache_dir
 
 # Parse command-line arguments
@@ -42,11 +42,12 @@ def get_client() -> GallicaClient:
 
 
 @mcp.tool()
-async def search_gallica(query: str, page: int = 1) -> dict:
+async def search_gallica(query: str, page: int = 1, sort: str = DEFAULT_SORT) -> dict:
     """Search Gallica for documents matching a text query.
 
     Searches across OCR content with support for boolean operators and exact phrases.
-    Returns paginated results with metadata. Uses exact matching by default.
+    Returns paginated results with metadata. Uses exact matching by default, ordered
+    by relevance.
 
     Note: To get text snippets showing where your search terms appear within documents,
     use the get_snippets tool with the document identifier and query.
@@ -65,6 +66,11 @@ async def search_gallica(query: str, page: int = 1) -> dict:
             The query is converted to CQL format automatically and searches OCR text content.
 
         page: Page number for pagination, 1-indexed (default: 1)
+
+        sort: Result ordering — "relevance" (default), "date_asc" or "date_desc".
+            Gallica matches loosely and reports very large totals, so relevance is
+            what surfaces the material worth reading. Use date order only for a
+            query narrowed enough that you intend to read the whole result set.
 
     Returns:
         Dictionary containing:
@@ -96,7 +102,7 @@ async def search_gallica(query: str, page: int = 1) -> dict:
         search_gallica(query='("Harry Houdini" OR "Jean Houdin") AND (escape OR illusion)')
     """
     client = get_client()
-    return await client.search(query=query, page=page, records_per_page=50)
+    return await client.search(query=query, page=page, records_per_page=50, sort=sort)
 
 
 # Conditionally define advanced_search_gallica based on flag
@@ -112,7 +118,8 @@ if ENABLE_ADVANCED_SEARCH:
         language: str | None = None,
         title: str | None = None,
         public_domain_only: bool = True,
-        exact_search: bool = True
+        exact_search: bool = True,
+        sort: str = DEFAULT_SORT
     ) -> dict:
         """Search Gallica with advanced filtering options.
 
@@ -139,6 +146,10 @@ if ENABLE_ADVANCED_SEARCH:
             public_domain_only: Restrict to public domain documents with freely downloadable OCR (default: True).
                 Set to False to include all documents regardless of access restrictions. (optional)
             exact_search: Enable exact matching (default: True). When True, disables fuzzy matching for more precise results.
+
+            sort: Result ordering — "relevance" (default), "date_asc" or "date_desc".
+                Prefer relevance when exploring; date order suits a filtered range you
+                intend to read in full, such as a chronological reconstruction.
                 When False, enables fuzzy matching which may find variants and OCR errors (e.g., "hanussen" matches "haussen").
                 Note: Using quotes in the query (e.g., '"exact phrase"') always forces exact matching regardless of this setting. (optional)
 
@@ -195,7 +206,8 @@ if ENABLE_ADVANCED_SEARCH:
             language=language,
             title=title,
             public_domain_only=public_domain_only,
-            exact_search=exact_search
+            exact_search=exact_search,
+            sort=sort
         )
 
 

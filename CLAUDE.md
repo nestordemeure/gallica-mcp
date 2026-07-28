@@ -46,7 +46,7 @@ gallica-mcp/
 **ContentSearch API:**
 - Base URL: `https://gallica.bnf.fr/services/ContentSearch`
 - Returns text snippets with search terms highlighted
-- Used by the `get_snippets` tool (requests go through the rate limiter: default 1 req/sec, single concurrency)
+- Used by the `get_snippets` tool (requests go through the rate limiter: default one request per 3s, single concurrency)
 
 **Text Retrieval:**
 - Plain text: `https://gallica.bnf.fr/[ark].texteBrut`
@@ -119,7 +119,7 @@ get_snippets(identifier="ark:/12148/bpt6k5619759j", query="magic AND (illusion O
 
 Three main tools are available (advanced search is optional):
 
-**`search_gallica(query, page=1)`** - Text search with boolean operators (always available)
+**`search_gallica(query, page=1, sort="relevance")`** - Text search with boolean operators (always available)
 - Query supports CQL boolean operators: AND, OR, NOT
 - Exact phrase matching with quotes: "Harry Houdini"
 - Grouping with parentheses: (A OR B) AND C
@@ -246,6 +246,15 @@ The client automatically builds CQL queries from the parameters:
 - Public domain filter: `dc.rights any "domaine public"` (applied by default)
 - All filters are combined with AND logic
 - SRU parameter `exactSearch` controls fuzzy matching behavior
+- Ordering is appended last, from `SORT_CLAUSES` (see below)
+
+## Result Ordering
+
+`sort` accepts `relevance` (default), `date_asc` or `date_desc`, sharing the vocabulary of the sibling archive clients. Relevance is expressed by omitting `sortby` altogether — Gallica has no relevance sort key, it is simply what you get by not asking for anything else.
+
+**Why relevance is the default.** The client previously appended `sortby dc.date/sort.ascending` unconditionally, which was close to unusable. Gallica's `text adj` ranks rather than filters, so a phrase search reports a long relevance tail: `"Robert-Houdin"` returns ~125,000 results whose first page is his own *Album des soirées fantastiques* and a programme from his theatre, and whose depths are unrelated. Forcing date order put a 1705 treatise on Paris rôtisseurs at position one and buried every genuinely relevant document thousands of results deep. Date order remains available because chronological reconstruction over a bounded range is a real use case; it is just the wrong default.
+
+A consequence worth carrying into any interface built on this: `total_results` is a ranking depth, not a count of documents containing the term, and must never be presented as one.
 
 ## Rate Limiting
 
@@ -308,5 +317,7 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
 - **A rejected query returns HTTP 200 with an SRU diagnostic**, not an error status. Left unchecked that reads as "0 results", making a malformed filter indistinguishable from a search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
 - **An anti-bot challenge also returns HTTP 200.** When Gallica decides it is being crawled it serves an ALTCHA "Vérification de sécurité" page, byte-identical whatever document was requested, served with HTTP 200 rather than 429. It was being stripped of markup and cached as the document's text, so every later read returned the challenge instead - silently and permanently. `_is_challenge_page` detects it and `download_text` refuses to cache it. The challenge is valid 24 hours, so a client that hits it should stop rather than retry.
 - **`dc.type périodique` matches nothing** while `collapsing=false` is set, since issues are returned individually as `fascicule`.
+- **`texteBrut` is guarded harder than the search endpoints.** In testing, `search` and ContentSearch kept answering normally while `download_text` on the same document came back as a challenge page. A refused download is therefore the earliest signal of throttling, not an isolated failure to route around.
+- **Hyphenated terms are indexed as separate tokens.** ContentSearch highlights `{Robert}-{Houdin}` as two spans, so hyphenated names match loosely and inflate totals.
 - **A malformed search record raises.** `_parse_record` used to swallow every exception and return None, which dropped the record from the results while the reported total still counted it - a search that silently under-reported. For a tool whose value rests on exhaustivity, a loud failure beats a quiet omission.
 - **An empty result set is one empty page**, `total_pages: 1`. The API implies zero; the client normalises it so callers behave the same here as for any other source.

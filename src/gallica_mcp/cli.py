@@ -16,7 +16,7 @@ import json
 import sys
 from typing import Any
 
-from .client import GallicaClient
+from .client import DEFAULT_SORT, SORT_ORDERS, GallicaClient
 from .paths import cache_dir
 
 RESULTS_PER_PAGE = 50
@@ -110,6 +110,7 @@ async def run_search(args: argparse.Namespace) -> int:
                 title=args.title,
                 public_domain_only=not args.include_restricted,
                 exact_search=not args.fuzzy,
+                sort=args.sort,
             )
 
             total_results = result["total_results"]
@@ -259,6 +260,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--fuzzy",
         action="store_true",
         help="match variants and OCR errors; much noisier, but finds mis-scanned names",
+    )
+    search.add_argument(
+        "--sort",
+        choices=SORT_ORDERS,
+        default=DEFAULT_SORT,
+        help=(
+            "result ordering (default: relevance). Gallica matches loosely and reports "
+            "huge totals, so relevance is what surfaces the material worth reading; "
+            "use date_asc only on a query you have narrowed enough to sweep whole"
+        ),
     )
     search.add_argument("--json", action="store_true", help="emit JSON instead of text")
     search.set_defaults(handler=run_search)
