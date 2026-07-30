@@ -1,6 +1,7 @@
 """Gallica API client with search and OCR text download capabilities."""
 
 import asyncio
+import json
 import re
 import xml.etree.ElementTree as ET
 from html import unescape
@@ -9,9 +10,16 @@ from typing import Any
 
 import httpx
 
+from .alto import alto_to_text
 from .paths import cache_dir as default_cache_dir
 from .query_parser import build_text_query_clause
-from .ratelimit import CrossProcessRateLimiter, configured_interval
+from .ratelimit import (
+    CrossProcessRateLimiter,
+    CrossProcessTokenBucket,
+    configured_interval,
+    configured_ocr_burst,
+    configured_ocr_refill,
+)
 
 USER_AGENT = "gallica-mcp/0.1.0 (historical research tool)"
 
@@ -31,8 +39,14 @@ class GallicaClient:
     """Client for interacting with Gallica API."""
 
     SRU_BASE_URL = "https://gallica.bnf.fr/SRU"
-    TEXT_BASE_URL = "https://gallica.bnf.fr"
     CONTENT_SEARCH_URL = "https://gallica.bnf.fr/services/ContentSearch"
+    # OCR comes from RequestDigitalElement, one ALTO page per request, with
+    # Pagination supplying the page count. The `.texteBrut` qualifier would
+    # return a whole document in one call and is what this client used to use,
+    # but it now sits behind the anti-bot challenge unconditionally - see the
+    # "Text retrieval" note in CLAUDE.md.
+    ALTO_URL = "https://gallica.bnf.fr/RequestDigitalElement"
+    PAGINATION_URL = "https://gallica.bnf.fr/services/Pagination"
 
     # XML namespaces for parsing SRU responses
     NAMESPACES = {
@@ -74,6 +88,13 @@ class GallicaClient:
                 if min_request_interval is not None
                 else configured_interval()
             ),
+        )
+        # The OCR endpoint meters separately and far more tightly than search,
+        # so it draws on a second budget on top of the shared pacing.
+        self._ocr_budget = CrossProcessTokenBucket(
+            state_file=self.cache_dir / ".ocr-budget",
+            capacity=configured_ocr_burst(),
+            refill_seconds=configured_ocr_refill(),
         )
 
     async def close(self):
@@ -282,34 +303,151 @@ class GallicaClient:
                 f"Could not parse a search result record: {error}"
             ) from error
 
-    async def download_text(self, identifier: str, refresh: bool = False) -> str:
-        """Download OCR text for a Gallica document.
+    async def document_structure(self, identifier: str) -> dict[str, Any]:
+        """How many pages a document has, and whether any of them carry OCR.
+
+        One cheap request that makes the cost of a download knowable before it
+        is spent, which on this source is the difference between a considered
+        retrieval and a ban.
+        """
+        doc_id = self._document_id(identifier)
+
+        # A document's page count never changes, and `get` needs it on every
+        # call - including calls that are otherwise served entirely from cache.
+        # Re-asking would spend a request against a budget of four to learn
+        # something already known.
+        structure_file = self.cache_dir / 'pages' / doc_id / 'structure.json'
+        if structure_file.exists():
+            try:
+                return json.loads(structure_file.read_text(encoding='utf-8'))
+            except (json.JSONDecodeError, OSError):
+                pass  # A damaged note is worth one request to replace.
+
+        response = await self._rate_limited_get(
+            self.PAGINATION_URL, params={'ark': doc_id}
+        )
+        self._raise_for_refusal(response, f"pagination for {doc_id}")
+
+        try:
+            root = ET.fromstring(response.content)
+        except ET.ParseError as error:
+            raise RuntimeError(
+                f"Could not read Gallica's pagination for {doc_id}: {error}"
+            ) from error
+
+        pages_element = root.find('.//nbVueImages')
+        if pages_element is None or not (pages_element.text or '').strip():
+            raise RuntimeError(
+                f"Gallica reported no page count for {doc_id}, so there is nothing "
+                "to download. The identifier may not be a digitised document."
+            )
+
+        content_element = root.find('.//hasContent')
+        has_content = (content_element.text or '').strip().lower() == 'true' \
+            if content_element is not None else True
+
+        structure = {
+            'identifier': doc_id,
+            'total_pages': int(pages_element.text.strip()),
+            'has_content': has_content,
+        }
+
+        structure_file.parent.mkdir(parents=True, exist_ok=True)
+        structure_file.write_text(json.dumps(structure), encoding='utf-8')
+        return structure
+
+    async def download_text(
+        self,
+        identifier: str,
+        first_page: int = 1,
+        last_page: int | None = None,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        """Download OCR text for a range of a document's pages.
+
+        Gallica serves OCR one page at a time as ALTO XML. Each page is cached
+        individually, so a download interrupted by the rate limiter resumes
+        where it stopped rather than starting over - which matters when the
+        penalty for re-requesting is measured in hours.
 
         Args:
             identifier: Document ARK identifier (e.g., 'ark:/12148/bpt6k5619759j')
-            refresh: Ignore any cached copy and fetch again
+            first_page: First page to fetch, 1-indexed and inclusive
+            last_page: Last page, inclusive; None means through the end
+            refresh: Ignore cached pages and fetch them again
 
         Returns:
-            Path to the cached text file
+            A summary carrying the assembled file's path, the range covered and
+            what the call actually cost in requests.
         """
-        clean_id = identifier.replace('ark:/', '').replace('/', '_')
+        structure = await self.document_structure(identifier)
+        doc_id = structure['identifier']
+        total_pages = structure['total_pages']
 
-        cache_file = self.cache_dir / f"{clean_id}.txt"
-        if cache_file.exists() and not refresh:
-            return str(cache_file.resolve())
-
-        ark_identifier = self._normalize_identifier(identifier)
-        html_text = await self._retrieve_texte_brut(ark_identifier)
-        plain_text = self._html_to_plain_text(html_text)
-
-        if not plain_text.strip():
+        if first_page > total_pages:
             raise RuntimeError(
-                f"Gallica returned no usable text for {ark_identifier}. Nothing has "
-                "been cached; the document may be image-only."
+                f"{doc_id} has {total_pages} page(s); page {first_page} does not exist."
             )
 
-        cache_file.write_text(plain_text, encoding='utf-8')
-        return str(cache_file.resolve())
+        last = total_pages if last_page is None else min(last_page, total_pages)
+        if last < first_page:
+            raise RuntimeError(
+                f"Page range {first_page}-{last_page} is empty; last_page must not "
+                f"precede first_page."
+            )
+
+        page_dir = self.cache_dir / 'pages' / doc_id
+        page_dir.mkdir(parents=True, exist_ok=True)
+
+        texts: list[tuple[int, str]] = []
+        fetched = 0
+        from_cache = 0
+
+        for page in range(first_page, last + 1):
+            page_file = page_dir / f"p{page:05d}.txt"
+
+            if page_file.exists() and not refresh:
+                texts.append((page, page_file.read_text(encoding='utf-8')))
+                from_cache += 1
+                continue
+
+            page_text = await self._retrieve_alto_page(doc_id, page)
+            page_file.write_text(page_text, encoding='utf-8')
+            texts.append((page, page_text))
+            fetched += 1
+
+        empty_pages = [page for page, text in texts if not text.strip()]
+        if len(empty_pages) == len(texts):
+            raise RuntimeError(
+                f"Gallica returned no OCR text for pages {first_page}-{last} of "
+                f"{doc_id}"
+                + ("" if structure['has_content'] else " (the document is flagged as "
+                   "having no indexed text)")
+                + ". The pages are most likely image-only, which is a property of the "
+                "scan rather than a failure to retry."
+            )
+
+        # Page numbers are kept in the assembled file: a researcher citing this
+        # material needs the page, and the whole point of the snippet workflow
+        # is to arrive at a page reference.
+        body = "\n\n".join(
+            f"--- page {page} ---\n\n{text}" for page, text in texts if text.strip()
+        )
+
+        suffix = "" if (first_page, last) == (1, total_pages) else f".p{first_page}-{last}"
+        cache_file = self.cache_dir / f"{doc_id}{suffix}.txt"
+        cache_file.write_text(body, encoding='utf-8')
+
+        return {
+            'path': str(cache_file.resolve()),
+            'identifier': doc_id,
+            'first_page': first_page,
+            'last_page': last,
+            'total_pages': total_pages,
+            'pages_fetched': fetched,
+            'pages_from_cache': from_cache,
+            'empty_pages': empty_pages,
+        }
 
     async def get_snippets(self, identifier: str, query: str) -> list[dict[str, Any]]:
         """Fetch text snippets for a specific document using the ContentSearch API.
@@ -525,48 +663,71 @@ class GallicaClient:
         ident = ident.lstrip('/')
         return f"ark:/{ident}"
 
-    async def _retrieve_texte_brut(self, ark_identifier: str) -> str:
-        """Try multiple texteBrut URL permutations until one returns content."""
-        urls = self._build_texte_brut_urls(ark_identifier)
-        errors: list[str] = []
+    async def _retrieve_alto_page(self, doc_id: str, page: int) -> str:
+        """Fetch one page of OCR as ALTO XML and reduce it to plain text."""
+        await self._ocr_budget.acquire()
 
-        for url in urls:
-            try:
-                response = await self._rate_limited_get(url)
-            except httpx.HTTPError as exc:
-                errors.append(f"{url} -> {exc}")
-                continue
+        try:
+            response = await self._rate_limited_get(
+                self.ALTO_URL, params={'O': doc_id, 'E': 'ALTO', 'Deb': page}
+            )
+        except httpx.TimeoutException as error:
+            # Once the OCR budget has been overdrawn repeatedly, Gallica stops
+            # answering at all rather than returning a further 429 - the
+            # connection simply hangs. A timeout here is therefore a throttling
+            # signal, not a network blip, and retrying deepens it.
+            raise RuntimeError(
+                f"Gallica stopped responding while fetching page {page} of {doc_id} "
+                f"({error}). On this endpoint a stall follows repeated rate limiting; "
+                "treat it as a block, stop downloading, and come back later. Pages "
+                "already fetched are cached."
+            ) from error
+        except httpx.HTTPError as error:
+            raise RuntimeError(
+                f"Could not reach Gallica for page {page} of {doc_id}: {error}"
+            ) from error
 
-            if response.status_code == 200 and response.text.strip():
-                # A 200 with a body is not proof of success: when Gallica decides
-                # it is being crawled it serves an anti-bot challenge page with
-                # exactly that shape. Left undetected it gets stripped of markup
-                # and cached as though it were the document's text, so every
-                # later read of that document returns the challenge instead -
-                # silently, and permanently.
-                if self._is_challenge_page(response.text):
-                    raise RuntimeError(
-                        f"Gallica served an anti-bot challenge instead of the text for "
-                        f"{ark_identifier}. Too many requests have been made recently; "
-                        "wait before retrying, and consider raising "
-                        "GALLICA_MIN_REQUEST_INTERVAL."
-                    )
-                return response.text
+        if response.status_code == 429 or self._is_challenge_page(response.text):
+            await self._ocr_budget.drain()
+        self._raise_for_refusal(response, f"page {page} of {doc_id}")
 
-            # If we get a 429 (rate limit), don't try other URLs
-            if response.status_code == 429:
-                raise RuntimeError(
-                    f"Rate limited by Gallica API (HTTP 429) when accessing {ark_identifier}. "
-                    "Please wait before making more requests."
-                )
+        try:
+            return alto_to_text(response.content)
+        except ET.ParseError as error:
+            raise RuntimeError(
+                f"Gallica returned unreadable ALTO for page {page} of {doc_id}: {error}"
+            ) from error
 
-            errors.append(f"{url} -> HTTP {response.status_code}")
+    def _raise_for_refusal(self, response: httpx.Response, what: str) -> None:
+        """Turn Gallica's two ways of saying no into one explicit error.
 
-        error_message = (
-            "Unable to download texteBrut for "
-            f"{ark_identifier} (tried: {'; '.join(errors)})"
-        )
-        raise RuntimeError(error_message)
+        The download endpoints refuse in two different shapes, and neither is a
+        plain error status: `RequestDigitalElement` answers an exhausted budget
+        with HTTP 429, while the site as a whole answers traffic it dislikes
+        with HTTP 200 carrying an anti-bot challenge page. Both have to stop the
+        download, because a challenge page written to the cache would sit there
+        masquerading as the document's text.
+        """
+        if response.status_code == 429:
+            raise RuntimeError(
+                f"Gallica rate-limited the download of {what} (HTTP 429). Its OCR "
+                "endpoint allows only a short burst before refusing, and it refills "
+                "slowly. Pages already fetched are cached, so re-running the same "
+                "command after a few minutes resumes rather than restarts - but do "
+                "not retry in a loop."
+            )
+
+        if self._is_challenge_page(response.text):
+            raise RuntimeError(
+                f"Gallica served an anti-bot challenge instead of {what}. Too many "
+                "requests have been made recently. Stop querying Gallica: the block "
+                "lasts hours, and retrying extends it."
+            )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Gallica returned HTTP {response.status_code} for {what}."
+            )
 
     @staticmethod
     def _is_challenge_page(html_text: str) -> bool:
@@ -581,37 +742,11 @@ class GallicaClient:
             for marker in ("altcha", "vérification de sécurité", "verification de securite")
         )
 
-    def _build_texte_brut_urls(self, ark_identifier: str) -> list[str]:
-        """Generate the common texteBrut URL variants Gallica supports."""
-        base = f"{self.TEXT_BASE_URL}/{ark_identifier.strip('/')}"
-        return [
-            f"{base}.texteBrut",
-            f"{base}/texteBrut",
-        ]
+    @staticmethod
+    def _document_id(identifier: str) -> str:
+        """The bare document id Gallica's OCR services want.
 
-    def _html_to_plain_text(self, html_text: str) -> str:
-        """Convert Gallica's texteBrut HTML page into normalized plain text."""
-        text = html_text
-
-        # Preserve logical breaks before dropping remaining tags.
-        text = re.sub(r'(?i)<\s*br\s*/?>', '\n', text)
-        text = re.sub(r'(?i)<\s*hr\b[^>]*>', '\n___GALLICA_HR___\n', text)
-        text = re.sub(
-            r'(?i)</?\s*(p|div|section|article|li|h[1-6]|tr|td|table)\b[^>]*>',
-            '\n',
-            text,
-        )
-
-        text = re.sub(r'<[^>]+>', '', text)
-        text = text.replace('___GALLICA_HR___', '<hr>')
-        text = unescape(text)
-        text = text.replace('\r', '')
-
-        # Collapse excessive whitespace while keeping intentional blank lines.
-        text = re.sub(r'[\t\x0b\f]+', ' ', text)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        text = re.sub(r' +\n', '\n', text)
-        text = re.sub(r'\n +', '\n', text)
-        text = re.sub(r' {2,}', ' ', text)
-
-        return text.strip()
+        `RequestDigitalElement` and `Pagination` take the trailing id
+        ("bpt6k5619759j"), not the full ARK the SRU reports.
+        """
+        return identifier.strip().rstrip('/').rsplit('/', 1)[-1]

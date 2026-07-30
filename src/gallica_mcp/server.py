@@ -212,26 +212,40 @@ if ENABLE_ADVANCED_SEARCH:
 
 
 @mcp.tool()
-async def download_text(identifier: str) -> str:
-    """Download OCR text from a Gallica document and save to cache in plain text format.
+async def download_text(
+    identifier: str,
+    first_page: int = 1,
+    last_page: int | None = None,
+) -> dict:
+    """Download OCR text from a Gallica document and save it to the local cache.
 
     Args:
         identifier: Gallica ARK identifier (e.g., 'ark:/12148/bpt6k5619759j')
+        first_page: First document page to download (1-indexed, inclusive)
+        last_page: Last document page, inclusive; omit for the end of the document
 
     Returns:
-        Path to the cached text file (as string)
+        A dict with the cached file's `path`, the range covered, `total_pages`,
+        and how many pages were newly `pages_fetched` versus reused from cache.
 
     IMPORTANT:
-        The downloaded files are VERY LARGE (typically 100KB-1MB+ of text).
-        DO NOT attempt to read the entire file into context.
-        Use read tools with offset/limit parameters to read specific portions.
-        Reading the full file will waste tokens and may cause performance issues.
+        Gallica serves OCR one page per request and refuses with HTTP 429 after
+        a short burst, so a whole book costs hundreds of requests and will be
+        cut off part way. Use get_snippets first: it reports page identifiers
+        like "PAG_30", and downloading just that range is both far cheaper and
+        usually the actual answer. Pages already fetched stay cached, so a
+        download stopped by the rate limit resumes rather than restarts.
+
+        Downloaded files are large. Read slices with offset/limit rather than
+        pulling a whole file into context.
 
     Example:
-        path = download_text("ark:/12148/bpt6k5619759j")
+        result = download_text("ark:/12148/bpt6k5619759j", first_page=30, last_page=35)
     """
     client = get_client()
-    return await client.download_text(identifier=identifier)
+    return await client.download_text(
+        identifier=identifier, first_page=first_page, last_page=last_page
+    )
 
 
 @mcp.tool()
@@ -290,7 +304,7 @@ Provides access to Gallica, the digital library of the Bibliothèque nationale d
 Available Tools:
 - search_gallica(query, page): Search OCR text with boolean operators (AND, OR, NOT)
 - get_snippets(identifier, query): Get text excerpts with page numbers for a specific document
-- download_text(identifier): Download full OCR text and cache locally
+- download_text(identifier, first_page, last_page): Download OCR text for a page range and cache locally
 - advanced_search_gallica(...): Search with filters (authors, dates, types, language)
 
 Query Syntax:

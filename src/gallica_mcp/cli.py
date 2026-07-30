@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from typing import Any
 
@@ -22,6 +23,16 @@ from .paths import cache_dir
 RESULTS_PER_PAGE = 50
 DOCUMENT_TYPES = ("monographie", "périodique", "fascicule", "manuscrit", "image", "carte", "partition")
 PROGRAM_NAME = "gallica"
+
+#: Above this many pages, `get` asks for an explicit range rather than
+#: downloading a whole document. Gallica serves OCR one page per request, so a
+#: book costs hundreds of requests against an endpoint that refuses after a
+#: handful - a newspaper issue is a reasonable default, a monograph is not.
+WHOLE_DOCUMENT_PAGE_LIMIT = 20
+
+#: Observed throughput of the OCR endpoint once its burst budget is exhausted,
+#: used only to put a wall-clock figure on that warning.
+SECONDS_PER_PAGE = 25
 
 
 class PageRange:
@@ -42,12 +53,25 @@ class PageRange:
         return f"{self.first}-{self.last}"
 
 
+#: ``snippets`` reports where a term sits as ``PAG_30``. Accepting that form
+#: verbatim means a page reference can be carried straight from one command to
+#: the next without the caller hand-translating it - and mistranslating it is
+#: how a download gets spent on the wrong pages.
+PAGE_IDENTIFIER = re.compile(r"^pag[_-]?0*(\d+)$")
+
+
 def parse_page_range(value: str) -> PageRange:
-    """Parse a ``--pages`` value: ``3``, ``2-5`` or ``all``."""
+    """Parse a ``--pages`` value: ``3``, ``2-5``, ``PAG_30`` or ``all``."""
     text = value.strip().lower()
 
     if text == "all":
         return PageRange(1, None)
+
+    text = PAGE_IDENTIFIER.sub(r"\1", text)
+    if "-" in text:
+        first_text, _, last_text = text.partition("-")
+        text = f"{PAGE_IDENTIFIER.sub(r'\1', first_text.strip())}-" \
+               f"{PAGE_IDENTIFIER.sub(r'\1', last_text.strip())}"
 
     try:
         if "-" in text:
@@ -191,17 +215,79 @@ async def run_snippets(args: argparse.Namespace) -> int:
 async def run_get(args: argparse.Namespace) -> int:
     """Download a document's OCR text and print the path to the cached file."""
     client = GallicaClient(cache_dir=cache_dir(args.cache_dir))
+    # No --pages means the whole document, but only if that is a sane thing to
+    # ask for; an explicit `--pages all` says the caller knows what it costs.
+    pages: PageRange = args.pages or PageRange(1, None)
 
     try:
-        path = await client.download_text(identifier=args.identifier, refresh=args.refresh)
+        # Gallica bills OCR by the page, so the cost of an unbounded `get` is a
+        # property of the document, not of the command. Checking it first turns
+        # a 500-page accident into a question.
+        if args.pages is None:
+            structure = await client.document_structure(args.identifier)
+            if structure["total_pages"] > WHOLE_DOCUMENT_PAGE_LIMIT:
+                print(
+                    f"{PROGRAM_NAME}: {structure['identifier']} has "
+                    f"{structure['total_pages']} pages, and Gallica serves OCR one page "
+                    f"per request. Downloading it whole would take roughly "
+                    f"{_estimated_minutes(structure['total_pages'])} and risks a block.\n"
+                    f"  Pass --pages to fetch the part you need, e.g. "
+                    f"--pages 30-35 (snippet identifiers like PAG_30 are accepted),\n"
+                    f"  or --pages all to download the whole document deliberately.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        result = await client.download_text(
+            identifier=args.identifier,
+            first_page=pages.first,
+            last_page=pages.last,
+            refresh=args.refresh,
+        )
     except RuntimeError as error:
         print(f"{PROGRAM_NAME}: {error}", file=sys.stderr)
         return 1
     finally:
         await client.close()
 
-    print(path)
+    if args.json:
+        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+        return 0
+
+    print(result["path"])
+    summary = (
+        f"# pages {result['first_page']}-{result['last_page']} of "
+        f"{result['total_pages']}  ·  {result['pages_fetched']} fetched, "
+        f"{result['pages_from_cache']} from cache"
+    )
+    if result["empty_pages"]:
+        summary += f"  ·  no OCR on page(s) {_summarize_pages(result['empty_pages'])}"
+    print(summary, file=sys.stderr)
     return 0
+
+
+def _estimated_minutes(pages: int) -> str:
+    """A rough wall-clock cost for a page-by-page download, for warnings."""
+    minutes = round(pages * SECONDS_PER_PAGE / 60)
+    if minutes < 60:
+        return f"{max(minutes, 1)} minutes"
+    return f"{minutes / 60:.1f} hours"
+
+
+def _summarize_pages(pages: list[int]) -> str:
+    """Render a page list compactly: ``3-5, 9``."""
+    if not pages:
+        return ""
+
+    runs: list[list[int]] = [[pages[0], pages[0]]]
+    for page in pages[1:]:
+        if page == runs[-1][1] + 1:
+            runs[-1][1] = page
+        else:
+            runs.append([page, page])
+
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -291,17 +377,29 @@ def build_parser() -> argparse.ArgumentParser:
         "get",
         help="download a document's OCR text, printing the cache path",
         description=(
-            "Download the full OCR text of a document and print the path to the cached "
-            "file. Files are large (100KB-1MB+); read slices of them rather than loading "
-            "them whole."
+            "Download OCR text and print the path to the cached file. Gallica serves "
+            "OCR one page per request and refuses after a short burst, so prefer "
+            "--pages over whole documents: use the PAG_ identifiers `snippets` "
+            "reports to fetch just the pages that matter."
         ),
     )
     get.add_argument("identifier", help="ARK identifier, e.g. ark:/12148/bpt6k5619759j")
+    get.add_argument(
+        "--pages",
+        type=parse_page_range,
+        default=None,
+        help=(
+            "document pages to download: 30, 30-35, PAG_30, or 'all'. "
+            f"Defaults to the whole document when it is at most "
+            f"{WHOLE_DOCUMENT_PAGE_LIMIT} pages."
+        ),
+    )
     get.add_argument(
         "--refresh",
         action="store_true",
         help="re-download even if a cached copy exists",
     )
+    get.add_argument("--json", action="store_true", help="emit JSON instead of text")
     get.set_defaults(handler=run_get)
 
     return parser

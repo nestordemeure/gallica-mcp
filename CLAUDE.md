@@ -12,7 +12,7 @@ MCP server for searching and retrieving documents from Gallica, the digital libr
 - **Exact vs. fuzzy matching** control (exact matching by default)
 - **Access rights filtering** for public domain documents (downloadable OCR)
 - **Text snippets** showing search terms in context (via optional get_snippets tool using ContentSearch API)
-- **OCR text download** with local caching
+- **OCR text download** by page range, with per-page local caching
 - **Pagination support** (up to 50 results per page)
 
 ## Structure
@@ -22,6 +22,7 @@ gallica-mcp/
 ├── .claude/skills/gallica-search/   # Skill documenting the CLI
 ├── src/gallica_mcp/
 │   ├── __init__.py
+│   ├── alto.py             # ALTO XML -> plain text
 │   ├── client.py           # API client + caching
 │   ├── cli.py              # `gallica` command-line interface
 │   ├── paths.py            # Cache location resolution
@@ -48,9 +49,22 @@ gallica-mcp/
 - Returns text snippets with search terms highlighted
 - Used by the `get_snippets` tool (requests go through the rate limiter: default one request per 3s, single concurrency)
 
-**Text Retrieval:**
-- Plain text: `https://gallica.bnf.fr/[ark].texteBrut`
-- Document identifiers: ARK format (`ark:/12148/...`)
+**Text Retrieval (ALTO, page by page):**
+- OCR: `https://gallica.bnf.fr/RequestDigitalElement?O=<id>&E=ALTO&Deb=<page>`
+- Page count: `https://gallica.bnf.fr/services/Pagination?ark=<id>` — `nbVueImages` and `hasContent`
+- Both take the **bare document id** (`bpt6k5619759j`), not the full ARK the SRU reports; `_document_id` strips it
+- Document identifiers elsewhere: ARK format (`ark:/12148/...`)
+
+**`.texteBrut` is no longer usable, and this is why the client stopped using it.**
+`https://gallica.bnf.fr/[ark].texteBrut` returned a whole document's OCR in one
+request, which is why it was the original implementation. It now redirects to
+`/services/engine/search/altcha` and serves the anti-bot challenge
+*unconditionally* — verified on a cold connection with no recent traffic, with
+both the client's own User-Agent and a full browser one, while SRU search
+answered normally seconds either side. It is not throttling and it is not
+fixable from here. ALTO is the documented alternative
+([api.bnf.fr](https://api.bnf.fr/fr/api-document-de-gallica)) and it works, at
+the cost of one request per page.
 
 ## Usage
 
@@ -260,19 +274,39 @@ A consequence worth carrying into any interface built on this: `total_results` i
 
 Requests are spaced by a cross-process rate limiter (`ratelimit.py`), default **3s**, overridable with `GALLICA_MIN_REQUEST_INTERVAL`, on top of an in-process semaphore limiting concurrency.
 
-BnF publishes no rate limit for the SRU, ContentSearch or texteBrut endpoints - only a policy of open access "except in case of abusive usage" ([api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche)). The one published figure covers the IIIF image API, which this client does not use. The 3s default follows established Gallica clients such as [bnfimage](https://rekyt.github.io/bnfimage/) and [bnf_downloader](https://github.com/yoshimitsuhiro/bnf_downloader), which treat one request per three seconds as the threshold above which BnF reads traffic as malicious. That figure is community practice rather than official documentation, but the downside is asymmetric: exceeding it costs hours of blocked access, while pacing conservatively costs seconds.
+BnF publishes no rate limit for the SRU or ContentSearch endpoints - only a policy of open access "except in case of abusive usage" ([api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche)). The one published figure covers the IIIF image API, which this client does not use. The 3s default follows established Gallica clients such as [bnfimage](https://rekyt.github.io/bnfimage/) and [bnf_downloader](https://github.com/yoshimitsuhiro/bnf_downloader), which treat one request per three seconds as the threshold above which BnF reads traffic as malicious. That figure is community practice rather than official documentation, but the downside is asymmetric: exceeding it costs hours of blocked access, while pacing conservatively costs seconds.
 
 **Why cross-process rather than an instance attribute.** An instance attribute was adequate while the only caller was a long-lived MCP server. It is not adequate now: every CLI invocation is a separate process with its own instance, and callers are expected to fan work out across several at once, so an instance attribute paces nothing. The limiter keeps its timestamp in `.rate-limit` inside the cache directory, guarded by an exclusive `flock`, which every process sharing that cache observes.
 
+### The OCR endpoint has a second, tighter budget
+
+`RequestDigitalElement` is metered as a **token bucket**, not a rate, so `CrossProcessTokenBucket` (state in `.ocr-budget`) sits on top of the interval limiter for OCR requests only. Defaults: burst **4**, refill **one per 25s**, overridable with `GALLICA_OCR_BURST` and `GALLICA_OCR_REFILL_SECONDS`.
+
+Those numbers are measured, and the measurement is the argument for the shape:
+
+| Pacing | Successes before HTTP 429 |
+| --- | --- |
+| 3s | 5 |
+| 5s | 4 |
+
+Slower pacing did not buy more requests, which is what rules out a simple interval — the server is counting requests in a window, not spacing between them. Roughly 120s of quiet restored the full allowance. Capacity is set to 4 rather than 5 so the client stops one short of the observed cliff.
+
+Two further behaviours the client depends on:
+
+- **A 429 drains the bucket** (`CrossProcessTokenBucket.drain`). The refusal proves the real budget was lower than the bucket believed, so leaving tokens in it would let the next call - very possibly another process - spend one the server will not honour.
+- **Sustained overdraw stops producing 429s and starts stalling.** After repeated refusals the endpoint simply does not answer and the connection times out. `_retrieve_alto_page` catches `httpx.TimeoutException` separately and reports it as a block rather than a network blip, because retrying it is exactly wrong.
+
 ## Caching
 
-- **Cache:** OCR text downloads (large, static files)
+- **Cache:** OCR text, **per page** under `pages/<doc_id>/pNNNNN.txt`, plus the assembled file the caller is handed
 - **Don't cache:** Search results (small, dynamic)
 - **Location:** `$XDG_CACHE_HOME/gallica-mcp/`, resolved by `paths.cache_dir()`; override with `--cache-dir` or `GALLICA_CACHE_DIR`
 
 The cache must not depend on the working directory: the CLI is installed globally and run from whatever project the researcher is in, so a CWD-relative cache would scatter downloads and destroy the hit rate.
 
-Downloaded text files are cached locally to avoid repeated API calls for the same document. The cache directory is gitignored.
+**Per page, not per document, and that is load-bearing.** A download long enough to exhaust the OCR budget *will* be cut off part way through. Caching each page as it arrives means re-running the same command resumes rather than restarts - which matters when every wasted request is drawn from a budget of four. Caching only the finished document would throw away the whole burst on each attempt and guarantee the download could never complete.
+
+The assembled file is named for the range: `<doc_id>.txt` for a whole document, `<doc_id>.p30-35.txt` for a slice. It carries `--- page N ---` markers, because the point of the snippet workflow is to arrive at a citable page reference and flattening that away would discard it.
 
 ## Document Types
 
@@ -317,7 +351,12 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
 - **A rejected query returns HTTP 200 with an SRU diagnostic**, not an error status. Left unchecked that reads as "0 results", making a malformed filter indistinguishable from a search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
 - **An anti-bot challenge also returns HTTP 200.** When Gallica decides it is being crawled it serves an ALTCHA "Vérification de sécurité" page, byte-identical whatever document was requested, served with HTTP 200 rather than 429. It was being stripped of markup and cached as the document's text, so every later read returned the challenge instead - silently and permanently. `_is_challenge_page` detects it and `download_text` refuses to cache it. The challenge is valid 24 hours, so a client that hits it should stop rather than retry.
 - **`dc.type périodique` matches nothing** while `collapsing=false` is set, since issues are returned individually as `fascicule`.
-- **`texteBrut` is guarded harder than the search endpoints, and recovers more slowly.** In testing, `search` and ContentSearch kept answering normally while `download_text` on the same document came back as a challenge page. A refused download is therefore the earliest signal of throttling, not an isolated failure to route around — and because it is also the last capability to come back, the search endpoints answering again is no evidence that downloads will. Anything built on this client should budget in documents downloaded rather than requests issued, since the rate limiter paces all three endpoints identically while BnF plainly does not weigh them equally.
+- **`texteBrut` is gated unconditionally; do not "fix" the download path by going back to it.** It is the obvious one-request-per-document endpoint and it is a dead end — see **Text Retrieval** above for what was tested. The per-page ALTO path is slower by design, not by oversight.
+- **ALTO lies about its encoding.** The XML prolog says `ISO-8859-1`; the bytes are UTF-8. Trusting the declaration renders every accented French word as mojibake (`SCÃNE` for `SCÈNE`), which is quietly corrupting rather than loudly broken — it would survive into quoted material in a report. `alto.py` strips the prolog and decodes as UTF-8.
+- **Hyphenated words are stored twice in ALTO.** A word broken across a line break appears as two `String` elements carrying `SUBS_TYPE="HypPart1"`/`"HypPart2"`, each with the whole word in `SUBS_CONTENT`. Emitting `CONTENT` naively yields `con- noitre`, which no search over the downloaded text will match. `_line_to_text` emits `SUBS_CONTENT` on the first half and drops the second.
+- **ALTO block structure has to be preserved.** A newspaper page is columns of unrelated articles; flattening `TextBlock`s into one paragraph glues the end of one story to the start of another and manufactures false adjacency — the kind of error that produces a confident misquotation.
+- **The OCR services want the bare id, not the ARK.** `RequestDigitalElement` and `Pagination` take `bpt6k5619759j`, while the SRU reports `ark:/12148/bpt6k5619759j`.
+- **An empty page is normal.** Illustration plates and blank leaves return valid ALTO with no `String` content. `download_text` reports which pages were empty and only raises if *every* requested page was, since that is the image-only case.
 - **Hyphenated terms are indexed as separate tokens.** ContentSearch highlights `{Robert}-{Houdin}` as two spans, so hyphenated names match loosely and inflate totals.
 - **A malformed search record raises.** `_parse_record` used to swallow every exception and return None, which dropped the record from the results while the reported total still counted it - a search that silently under-reported. For a tool whose value rests on exhaustivity, a loud failure beats a quiet omission.
 - **An empty result set is one empty page**, `total_pages: 1`. The API implies zero; the client normalises it so callers behave the same here as for any other source.

@@ -12,8 +12,10 @@ The BnF's digital library: French newspapers, periodicals, books and manuscripts
 ```sh
 gallica search "<query>" [--pages N|N-M|all] [--sort ORDER] [filters] [--json]
 gallica snippets <ark> "<query>"   # where the query appears inside one document
-gallica get <ark>                  # download OCR text, prints path to the cached file
+gallica get <ark> [--pages 30-35]  # download OCR text, prints path to the cached file
 ```
+
+Note that `--pages` means different things on the two commands: *result* pages on `search`, *document* pages on `get`.
 
 Filters for `search`: `--creator NAME` (repeatable), `--type TYPE` (repeatable, from `monographie`, `périodique`, `fascicule`, `manuscrit`, `image`, `carte`, `partition`), `--from-year`, `--to-year`, `--language CODE` (ISO 639-2: `fre`, `eng`, `ger`…), `--title TEXT`, `--include-restricted`, `--fuzzy`.
 
@@ -22,6 +24,15 @@ Filters for `search`: `--creator NAME` (repeatable), `--type TYPE` (repeatable, 
 **Search returns no snippets.** This is the important workflow difference: `search` gives you documents, then `snippets` tells you whether a given document is actually worth anything, and only then does `get` download it. Going straight from search to `get` wastes a large download on documents that hold a single passing mention.
 
 `snippets` marks matched terms in `{braces}` and reports a page identifier such as `PAG_30` for each occurrence. Its excerpts run to a sentence or two of real context, not a few words, so they are frequently enough to judge *and* to quote in a report without downloading anything.
+
+**Those page identifiers feed straight into `get`.** Gallica serves OCR one page per request, so `get` takes a page range and `--pages` accepts the `PAG_30` form verbatim:
+
+```sh
+gallica snippets ark:/12148/bd6t5841739g "prestidigitateur"   # → occurrences on PAG_3, PAG_4
+gallica get ark:/12148/bd6t5841739g --pages PAG_3-PAG_4       # → two requests, not sixteen
+```
+
+This is the whole shape of working with this source: search to find documents, snippets to find the pages, `get` to read only those pages. A `get` without `--pages` on a 544-page book asks for 544 requests against an endpoint that allows a burst of four before making you wait, so the command declines documents over 20 pages and tells you to pick a range. `--pages all` overrides that when you genuinely mean it.
 
 ## Query syntax
 
@@ -65,22 +76,29 @@ By default only public-domain documents with downloadable OCR are returned. `--i
 ## Traps specific to this source
 
 - **`--type périodique` matches nothing.** Because issues are returned individually rather than collapsed, periodicals appear as `fascicule`. Use that instead.
-- **An anti-bot challenge can arrive as a normal-looking success** — HTTP 200 carrying an ALTCHA "Vérification de sécurité" page rather than a 429. `get` detects it and refuses rather than caching it. If you see it, you have been querying too fast: **stop querying Gallica entirely and tell the user**. The block is measured in hours, not minutes, so retrying makes it worse and there is nothing to be gained by trying again in this session.
-- **`get` is the expensive command, the first to be refused and the last to recover.** Downloads come from a different endpoint (`texteBrut`) to search and snippets, and it is guarded harder: in testing, search and `snippets` kept answering normally on a document whose `get` came back as a challenge page. So a failing `get` does not mean you are safely under the limit elsewhere — it is the earliest warning you are over it. It also cools down slowest, so search recovering tells you nothing about whether downloads have. Treat a refusal as the signal to stop, not as one command to work around. See **Cost** below for how to budget around it.
-- **`get` can also fail on documents that searched fine** — an image-only scan has no OCR to return. That is a property of the document, not an error to retry. A challenge page says so explicitly; a document with no text does not.
-- **Prefer `snippets` over `get` far more than on other sources.** Snippets are cheap, quote generously, and carry page identifiers, which is often the whole deliverable: a researcher wants `PAG_33` of a named document, not a megabyte of OCR. Reach for `get` only when a document warrants reading at length.
+- **An anti-bot challenge can arrive as a normal-looking success** — HTTP 200 carrying an ALTCHA "Vérification de sécurité" page rather than a 429. The client detects it and refuses rather than caching it. If you see it, you have been querying too fast: **stop querying Gallica entirely and tell the user**. The block is measured in hours, not minutes, so retrying makes it worse and there is nothing to be gained by trying again in this session.
+- **`get` is metered separately from search, and far more tightly.** OCR comes from a different endpoint, which allows a short burst and then answers HTTP 429 for minutes. Search and `snippets` keep working throughout, so search answering normally is no evidence that downloads will. Measured: the fifth request of a burst was refused whether they were spaced three seconds or five, and about two minutes of quiet restored the allowance.
+- **Three different refusals, and they mean different things.** HTTP 429 is the ordinary budget running out — pages already fetched stay cached, so the same command a few minutes later resumes where it stopped. A stalled request that times out means the budget has been overdrawn repeatedly and Gallica has stopped answering that endpoint at all; treat it as a block and stop. An ALTCHA page is the site-wide block, and is the most serious. Only the first is worth waiting out.
+- **`get` can also fail on documents that searched fine** — an image-only scan has no OCR to return. That is a property of the document, not an error to retry. The command says which pages came back empty.
+- **Prefer `snippets` over `get` far more than on other sources.** Snippets are cheap, quote generously, and carry page identifiers, which is often the whole deliverable: a researcher wants `PAG_33` of a named document, not a megabyte of OCR. Reach for `get` only when a document warrants reading at length — and then only for the pages that do.
 - Use `--refresh` to replace a cached copy you have reason to distrust.
 
 ## Cost
 
-Rate-limited to **one request every three seconds** with single concurrency, so sweeps are slow: 50 results per page means a 20-page sweep costs a minute of waiting before any reading starts. Budget for that, and prefer narrowing the query to sweeping a huge result set. BnF publishes no limit for these endpoints, but established Gallica clients treat 3s as the point above which traffic is read as malicious. Downloads are cached under `$XDG_CACHE_HOME/gallica-mcp`. When reading many documents, dispatch subagents and have them report back with page identifiers and quotes.
+Searches are rate-limited to **one request every three seconds** with single concurrency, so sweeps are slow: 50 results per page means a 20-page sweep costs a minute of waiting before any reading starts. Budget for that, and prefer narrowing the query to sweeping a huge result set. BnF publishes no limit for the search endpoints, but established Gallica clients treat 3s as the point above which traffic is read as malicious.
 
 That pacing is shared across every process, so parallel subagents share one budget rather than each getting their own. Fanning out widely speeds up the reading, not the fetching.
 
-**Requests are not all worth the same, and `get` is the expensive one.** The 3s interval paces them identically, but Gallica does not treat them identically. A `get` pulls a whole document's OCR off `texteBrut`, and it counts for far more against whatever budget BnF is actually keeping than a search or a `snippets` call does — a handful of downloads can put you over a line that dozens of searches would not have reached. Budget in documents downloaded, not in requests made.
+**`get` is metered in pages, and the budget is small.** OCR is served one page per request, and the client holds a burst of **4 pages** that refills at about **one page every 25 seconds** — measured against the endpoint, not published by BnF. So:
 
-**And it recovers slowest.** When `get` starts being refused, it stays refused long after the search endpoints are answering normally again. Search coming back is therefore not evidence that downloads have come back, and it is not permission to start retrying them — the usual pattern is that you resume searching happily, assume the block has lifted, and walk straight back into it on the first download. Once `get` has been refused, treat downloading as closed for the session and work from snippets, even when everything else looks healthy.
+| What you ask for | Roughly what it costs |
+| --- | --- |
+| 3 pages found via snippets | seconds |
+| an 8-page newspaper issue | ~2 minutes |
+| a 200-page book | over an hour, and it will be interrupted |
 
-The practical consequence: decide a document is worth reading in full *before* spending a `get` on it, using snippets to make that call. Downloads are cached under `$XDG_CACHE_HOME/gallica-mcp`, so the cost is paid once per document — but a download spent on a document that turns out to hold one passing mention is not refundable, and on this source it is one of the few mistakes that can end the session's access rather than merely waste a little time.
+This budget is shared across processes too, so subagents downloading in parallel drain one bucket. Fanning out does not multiply it.
+
+**The practical consequence:** use snippets to find the pages, then fetch that range. A three-page `get` is cheap and near-instant; a whole-book `get` is the one mistake on this source that can cost the session's access rather than a little time. Pages are cached individually under `$XDG_CACHE_HOME/gallica-mcp`, so nothing already fetched is ever re-fetched, and a download stopped by a 429 resumes rather than restarts.
 
 **Over-querying gets you banned, and the ban outlasts the session.** This is a free public service; a sweep that looks thorough from here looks like scraping from theirs. If requests start failing or returning something that is not what you asked for, stop and say so rather than retrying into a longer ban.
