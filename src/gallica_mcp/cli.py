@@ -132,6 +132,10 @@ async def run_search(args: argparse.Namespace) -> int:
                 date_end=args.to_year,
                 language=args.language,
                 title=args.title,
+                subject=args.subject,
+                publisher=args.publisher,
+                library=args.library,
+                min_ocr_quality=args.min_ocr_quality,
                 public_domain_only=not args.include_restricted,
                 exact_search=not args.fuzzy,
                 sort=args.sort,
@@ -338,6 +342,47 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--language", metavar="CODE", help="ISO 639-2 code, e.g. fre, eng, ger")
     search.add_argument("--title", metavar="TEXT", help="filter on document title")
     search.add_argument(
+        "--subject",
+        metavar="HEADING",
+        help=(
+            "BnF catalogue subject heading, in French, e.g. 'Prestidigitation'. "
+            "Unlike the text index this is a strict filter, so it cuts a huge "
+            "result set to a real one - but headings belong to catalogue records, "
+            "so it returns ZERO periodical issues: never combine it with a press "
+            "sweep. Subdivisions are written with two dashes, e.g. "
+            "'Prestidigitation -- XIXe siecle'"
+        ),
+    )
+    search.add_argument(
+        "--publisher",
+        metavar="NAME",
+        help=(
+            "publisher as printed on the item, e.g. 'Hachette'. The field also "
+            "carries the place of publication in parentheses ('E. Voisin (Paris)'), "
+            "so a city name here matches the place too rather than filtering by it"
+        ),
+    )
+    search.add_argument(
+        "--library",
+        metavar="NAME",
+        help=(
+            "holding institution, matched against the record's provenance string, "
+            "e.g. 'Centre National des Arts du Cirque'. BnF departments work too: "
+            "'departement Arts du spectacle'. Accents may be omitted"
+        ),
+    )
+    search.add_argument(
+        "--min-ocr-quality",
+        type=float,
+        metavar="SCORE",
+        help=(
+            "keep only documents whose OCR scored at least SCORE out of 100. The "
+            "single most effective filter on this source, since its result tails "
+            "are largely OCR noise - but any value above 0 silently excludes "
+            "material that has no OCR at all, such as engravings and image-only scans"
+        ),
+    )
+    search.add_argument(
         "--include-restricted",
         action="store_true",
         help="include documents whose OCR is not freely downloadable",
@@ -412,7 +457,10 @@ def main() -> None:
         exit_code = asyncio.run(args.handler(args))
     except KeyboardInterrupt:
         exit_code = 130
-    except RuntimeError as error:
+    except (RuntimeError, ValueError) as error:
+        # ValueError is how the client rejects an out-of-range filter value, such
+        # as an OCR quality outside 0-100. argparse cannot catch those, and a
+        # traceback is the wrong way to tell someone they typed 101.
         print(f"{PROGRAM_NAME}: {error}", file=sys.stderr)
         exit_code = 1
 

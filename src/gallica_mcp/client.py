@@ -12,7 +12,7 @@ import httpx
 
 from .alto import alto_to_text
 from .paths import cache_dir as default_cache_dir
-from .query_parser import build_text_query_clause
+from .query_parser import build_text_query_clause, escape_cql_literal
 from .ratelimit import (
     CrossProcessRateLimiter,
     CrossProcessTokenBucket,
@@ -33,6 +33,11 @@ SORT_CLAUSES = {
 }
 SORT_ORDERS = tuple(SORT_CLAUSES)
 DEFAULT_SORT = "relevance"
+
+# `ocrquality` is scored out of 100 and compared as a string of the form
+# "xx.xx", so a threshold has to be formatted rather than interpolated raw.
+OCR_QUALITY_MIN = 0.0
+OCR_QUALITY_MAX = 100.0
 
 
 class GallicaClient:
@@ -112,6 +117,10 @@ class GallicaClient:
         date_end: int | None = None,
         language: str | None = None,
         title: str | None = None,
+        subject: str | None = None,
+        publisher: str | None = None,
+        library: str | None = None,
+        min_ocr_quality: float | None = None,
         public_domain_only: bool = True,
         exact_search: bool = True,
         sort: str = DEFAULT_SORT
@@ -128,6 +137,12 @@ class GallicaClient:
             date_end: Latest publication year (inclusive)
             language: Language code (ISO 639-2)
             title: Text to search in titles
+            subject: BnF subject heading; catalogued items only, so this returns
+                no periodical issues
+            publisher: Publisher name as printed on the item
+            library: Holding institution, matched against the record's source field
+            min_ocr_quality: Lowest acceptable OCR quality score, 0-100; any
+                value above 0 excludes material with no usable OCR
             public_domain_only: Restrict to public domain documents with freely downloadable OCR (default True)
             exact_search: Use exact matching (default True). When True, disables fuzzy matching.
             sort: Result ordering, one of SORT_ORDERS (default relevance)
@@ -147,6 +162,10 @@ class GallicaClient:
             date_end=date_end,
             language=language,
             title=title,
+            subject=subject,
+            publisher=publisher,
+            library=library,
+            min_ocr_quality=min_ocr_quality,
             public_domain_only=public_domain_only,
             sort=sort
         )
@@ -550,6 +569,10 @@ class GallicaClient:
         date_end: int | None = None,
         language: str | None = None,
         title: str | None = None,
+        subject: str | None = None,
+        publisher: str | None = None,
+        library: str | None = None,
+        min_ocr_quality: float | None = None,
         public_domain_only: bool = True,
         sort: str = DEFAULT_SORT
     ) -> str:
@@ -563,6 +586,10 @@ class GallicaClient:
             date_end: Latest publication year
             language: Language code
             title: Text to search in titles
+            subject: BnF subject heading
+            publisher: Publisher name
+            library: Holding institution
+            min_ocr_quality: Lowest acceptable OCR quality score, 0-100
             public_domain_only: Restrict to public domain documents
             sort: One of SORT_ORDERS
 
@@ -582,23 +609,50 @@ class GallicaClient:
 
         # Title search
         if title and title.strip():
-            parts.append(f'dc.title all "{title.strip()}"')
+            parts.append(self._field_clause('dc.title', 'all', title))
 
         # Creators (OR logic)
         if creators:
-            creator_parts = [f'dc.creator all "{creator}"' for creator in creators]
-            if len(creator_parts) == 1:
-                parts.append(creator_parts[0])
-            else:
-                parts.append(f'({" or ".join(creator_parts)})')
+            parts.append(self._any_of('dc.creator', 'all', creators))
 
         # Document types (OR logic)
         if doc_types:
-            type_parts = [f'dc.type adj "{doc_type}"' for doc_type in doc_types]
-            if len(type_parts) == 1:
-                parts.append(type_parts[0])
-            else:
-                parts.append(f'({" or ".join(type_parts)})')
+            parts.append(self._any_of('dc.type', 'adj', doc_types))
+
+        # Subject heading.
+        #
+        # `dc.subject` carries the BnF's catalogue headings, which is a strict
+        # index rather than a ranked one: a heading that does not exist returns
+        # nothing at all instead of a loose tail. That makes it the sharpest
+        # filter here - and also the narrowest, because only catalogued items
+        # carry a heading and periodical *issues* carry none.
+        if subject and subject.strip():
+            parts.append(self._field_clause('dc.subject', 'all', subject))
+
+        # Publisher, as printed on the item.
+        if publisher and publisher.strip():
+            parts.append(self._field_clause('dc.publisher', 'all', publisher))
+
+        # Holding institution.
+        #
+        # `dc.source` is the provenance string, holding library followed by
+        # shelfmark ("Bibliothèque nationale de France, département Arts du
+        # spectacle, DIAMAQ23513"), so matching words in it selects a library or
+        # one of the BnF's departments.
+        if library and library.strip():
+            parts.append(self._field_clause('dc.source', 'all', library))
+
+        # OCR quality floor.
+        #
+        # `ocrquality` is scored out of 100 and compared as a "xx.xx" string, so
+        # the threshold is formatted rather than interpolated raw.
+        if min_ocr_quality is not None:
+            if not OCR_QUALITY_MIN <= min_ocr_quality <= OCR_QUALITY_MAX:
+                raise ValueError(
+                    f"min_ocr_quality must be between {OCR_QUALITY_MIN:.0f} and "
+                    f"{OCR_QUALITY_MAX:.0f}; got {min_ocr_quality}"
+                )
+            parts.append(f'ocrquality >= "{min_ocr_quality:.2f}"')
 
         # Date range.
         #
@@ -641,6 +695,28 @@ class GallicaClient:
     def _build_text_clause(self, query: str) -> str:
         """Normalize a user text query into a valid CQL clause."""
         return build_text_query_clause(query)
+
+    @staticmethod
+    def _field_clause(index: str, relation: str, value: str) -> str:
+        """One `index relation "value"` clause, with the value made safe.
+
+        Filter values are user-supplied and land inside a quoted CQL literal, so
+        an unescaped quote in one would truncate the literal and get the whole
+        query rejected.
+        """
+        return f'{index} {relation} "{escape_cql_literal(value.strip())}"'
+
+    @classmethod
+    def _any_of(cls, index: str, relation: str, values: list[str]) -> str:
+        """Match any of several values against one index (OR), parenthesised.
+
+        The parentheses matter: the caller joins clauses with `and`, which binds
+        tighter than `or` in CQL, so a bare alternation would silently regroup.
+        """
+        clauses = [cls._field_clause(index, relation, value) for value in values]
+        if len(clauses) == 1:
+            return clauses[0]
+        return f'({" or ".join(clauses)})'
 
     async def _rate_limited_get(self, url: str, **kwargs) -> httpx.Response:
         """Issue a GET request honoring concurrency and rate limits."""

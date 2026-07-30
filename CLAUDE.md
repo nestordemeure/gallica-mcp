@@ -196,6 +196,10 @@ The `query` parameter supports:
 - `date_end` (int) - Latest publication year (inclusive)
 - `language` (str) - Language code (ISO 639-2, 3 letters)
 - `title` (str) - Text to search in document titles
+- `subject` (str) - BnF catalogue subject heading, French, subdivided with ` -- `
+- `publisher` (str) - Publisher as printed on the item
+- `library` (str) - Holding institution, matched against `dc.source`
+- `min_ocr_quality` (float) - Lowest acceptable OCR score, 0-100
 - `public_domain_only` (bool) - Restrict to public domain documents with downloadable OCR (default: True)
 - `exact_search` (bool) - Enable exact matching (default: True). Set to False for fuzzy matching
 
@@ -257,6 +261,9 @@ The client automatically builds CQL queries from the parameters:
 - Text query: `text all "query"` (processed by query parser)
 - Multiple creators use OR logic: `(dc.creator all "A" or dc.creator all "B")`
 - Multiple doc types use OR logic: `(dc.type adj "A" or dc.type adj "B")`
+- Subject / publisher / library: `dc.subject all`, `dc.publisher all`, `dc.source all`
+- OCR floor: `ocrquality >= "NN.NN"`, formatted to two decimals because the index compares as a string
+- Every filter value passes through `escape_cql_literal`, since an unescaped `"` would close the literal early and get the query rejected
 - Public domain filter: `dc.rights any "domaine public"` (applied by default)
 - All filters are combined with AND logic
 - SRU parameter `exactSearch` controls fuzzy matching behavior
@@ -353,6 +360,13 @@ This ensures users see **all matching content**, not just one arbitrary issue pe
 - **A rejected query returns HTTP 200 with an SRU diagnostic**, not an error status. Left unchecked that reads as "0 results", making a malformed filter indistinguishable from a search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
 - **An anti-bot challenge also returns HTTP 200.** When Gallica decides it is being crawled it serves an ALTCHA "Vérification de sécurité" page, byte-identical whatever document was requested, served with HTTP 200 rather than 429. It was being stripped of markup and cached as the document's text, so every later read returned the challenge instead - silently and permanently. `_is_challenge_page` detects it and `download_text` refuses to cache it. The challenge is valid 24 hours, so a client that hits it should stop rather than retry.
 - **`dc.type périodique` matches nothing** while `collapsing=false` is set, since issues are returned individually as `fascicule`.
+- **`dc.subject` silently excludes all periodical issues.** Subject headings hang off the parent catalogue record, so `dc.subject all "X" and dc.type adj "fascicule"` is always zero — verified live. A subject filter combined with a press sweep returns nothing and looks exactly like a term nobody used.
+- **There is no place-of-publication index.** `dc.coverage` does not exist (the server answers "There are no translation for the following key"), and `dc.publisher` conflates publisher and place — its values look like `E. Voisin (Paris)`, and `dc.publisher all "Paris"` returns 3.8M records. A `--place` flag would therefore be a lie; do not add one.
+- **`dewey` only resolves at single-digit granularity, and `sdewey` does not resolve at all.** `dewey any "7"` narrows (193,864 → 4,653 on a text query); `dewey any "79"` and `dewey any "793"` both return zero, despite BnF documenting detailed codes. Ten buckets is too coarse to expose, so it is not wired up.
+- **`provenance` works but does not discriminate here.** It is a genuine strict filter (`provenance adj "erara.ch"` alone returns 144,196), but the text index's ranked tail is entirely `bnf.fr`: adding `provenance adj "bnf.fr"` to a text query changes the total by nothing, and `erara.ch` takes it to zero. Not worth a flag.
+- **`dc.format` is a grab-bag** — physical description, MIME type and view count share the field (`1 vol. (66 p.) : fig. ; in-16`, `image/jpeg`, `Nombre total de vues : 76`). Media type is what `dc.type` is for, so no `--format` flag.
+- **SRU `explain` answers HTTP 500** (a Tomcat "Could not resolve view with name 'error'"), so the index list cannot be discovered from the service. The documented list lives at [api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche) and does not entirely match reality — verify any new index live before exposing it.
+- **A strict metadata filter converts the ranked tail into a real count.** `dc.subject all "Prestidigitation"` reports 39, not six figures, and intersects properly with a text clause (10 with `text adj "gobelet"`). This is the only reliable way to make `total_results` mean something on this source.
 - **`texteBrut` is gated unconditionally; do not "fix" the download path by going back to it.** It is the obvious one-request-per-document endpoint and it is a dead end — see **Text Retrieval** above for what was tested. The per-page ALTO path is slower by design, not by oversight.
 - **ALTO lies about its encoding.** The XML prolog says `ISO-8859-1`; the bytes are UTF-8. Trusting the declaration renders every accented French word as mojibake (`SCÃNE` for `SCÈNE`), which is quietly corrupting rather than loudly broken — it would survive into quoted material in a report. `alto.py` strips the prolog and decodes as UTF-8.
 - **Hyphenated words are stored twice in ALTO.** A word broken across a line break appears as two `String` elements carrying `SUBS_TYPE="HypPart1"`/`"HypPart2"`, each with the whole word in `SUBS_CONTENT`. Emitting `CONTENT` naively yields `con- noitre`, which no search over the downloaded text will match. `_line_to_text` emits `SUBS_CONTENT` on the first half and drops the second.

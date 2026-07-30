@@ -210,8 +210,13 @@ _PREC_AND = 2
 _PREC_OR = 1
 
 
-def _escape_cql_literal(value: str) -> str:
-    """Escape double quotes and backslashes for CQL string literals."""
+def escape_cql_literal(value: str) -> str:
+    """Escape double quotes and backslashes for CQL string literals.
+
+    Every filter value reaches Gallica inside a double-quoted CQL literal, so
+    anything carrying a quote of its own would otherwise close the literal early
+    and produce a query the server rejects with a diagnostic.
+    """
     return value.replace("\\", "\\\\").replace('"', r"\"")
 
 
@@ -219,7 +224,7 @@ def _emit_cql(node: _Node) -> tuple[str, int]:
     """Convert an AST node into a CQL fragment and return (fragment, precedence)."""
     if isinstance(node, _TermNode):
         relation = "adj" if node.exact else "all"
-        literal = _escape_cql_literal(node.value)
+        literal = escape_cql_literal(node.value)
         return f'text {relation} "{literal}"', _PREC_TERM
 
     if isinstance(node, _NotNode):

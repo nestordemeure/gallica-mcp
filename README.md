@@ -4,7 +4,7 @@ MCP server for [Gallica](https://gallica.bnf.fr/), the digital library of the Bi
 
 - **search_gallica**: Text search with boolean operators (AND, OR, NOT), exact phrase matching with quotes, and parentheses for grouping. Returns paginated results (50 docs/page) with metadata.
 - **get_snippets**: Retrieves text excerpts showing where search terms appear within a specific document. Includes page numbers for each snippet.
-- **advanced_search_gallica**: Search with filters for creators (authors), document types, date ranges, language, and title. All filter parameters are optional.
+- **advanced_search_gallica**: Search with filters for creators (authors), document types, date ranges, language, title, subject heading, publisher, holding library, and a minimum OCR quality score. All filter parameters are optional.
 - **download_text**: Downloads OCR text for a range of a document's pages, given its ARK identifier. Caches each page locally for fast repeated access.
 
 The search functions convert your inputs into CQL (Contextual Query Language) queries that are sent to Gallica's SRU API.
@@ -52,6 +52,10 @@ gemini mcp list   # For Gemini CLI
 ```bash
 gallica search '"Tour Eiffel"'                                 # first page, best matches first
 gallica search '"Tour Eiffel"' --type monographie --from-year 1889 --to-year 1900
+gallica search '"Tour Eiffel"' --min-ocr-quality 99            # only legibly scanned documents
+gallica search '"Tour Eiffel"' --publisher Hachette            # 287 results, not 622,818
+gallica search --subject 'Tour Eiffel (Paris)'                  # catalogue subject heading, no text query
+gallica search --library 'departement Arts du spectacle'        # one holding collection, browsed whole
 gallica search 'Exposition universelle' --from-year 1889 --to-year 1890 --sort date_asc --pages all
 gallica snippets 'ark:/12148/bpt6k1910270z' '"Tour Eiffel"'    # where it appears, with PAG_ page ids
 gallica get 'ark:/12148/bpt6k1910270z' --pages 2-3             # cached OCR text path
@@ -61,7 +65,24 @@ Search returns documents without snippets, so the workflow is search → `snippe
 
 `snippets` reports page identifiers like `PAG_30`, and `get --pages` accepts that form verbatim, so a page reference carries from one command to the next without translation.
 
-**Results are ordered by relevance, and that matters more than it sounds.** Gallica's text index ranks rather than filters: a phrase search reports a long tail of loosely related documents, so `"Tour Eiffel"` claims ~620,000 results while only the first page or two are actually about it. Treat the total as a ranking depth, not a count of matches. `--sort date_asc`/`date_desc` are available for chronological work, but they are worth using only on a query narrowed by filters until its total is plausible — on a broad query they bury the good material.
+**Results are ordered by relevance, and that matters more than it sounds.** Gallica's text index ranks rather than filters: a phrase search reports a long tail of loosely related documents, so `"Tour Eiffel"` claims 622,818 results while only the first page or two are actually about it. Treat the total as a ranking depth, not a count of matches. `--sort date_asc`/`date_desc` are available for chronological work, but they are worth using only on a query narrowed by filters until its total is plausible — on a broad query they bury the good material.
+
+### Filters
+
+`search` takes `--creator` and `--type` (both repeatable, ORed), `--from-year`, `--to-year`, `--language`, `--title`, `--subject`, `--publisher`, `--library`, `--min-ocr-quality`, plus `--include-restricted` and `--fuzzy`. All are optional, and each is ANDed onto the query.
+
+Four are worth singling out, because they behave unlike the text search and each carries an edge:
+
+| Flag | Selects on | Worth knowing |
+| --- | --- | --- |
+| `--subject` | BnF catalogue subject heading, in French | A strict filter, so the reported total becomes a true count. But headings belong to catalogue records, so it returns **zero periodical issues** — never combine it with a newspaper sweep |
+| `--min-ocr-quality` | OCR quality score, 0–100 | The most broadly useful filter here. Any value above 0 excludes material with no OCR at all, such as engravings and image-only scans |
+| `--publisher` | Publisher as printed on the item | The field also carries the place of publication in parentheses (`E. Voisin (Paris)`), so a city name matches that place. It is **not** a place-of-publication filter, and Gallica has no index that is |
+| `--library` | Holding institution, from the record's provenance string | Reaches a partner collection or a BnF department whole, with no text query at all. Values are catalogue strings, so take them from a result's source field; accents may be omitted |
+
+**Filters repair the result count.** The six-figure totals come from the text index alone; metadata filters intersect it strictly, so a filtered query reports a number that means something. That is why narrowing beats paging deeper — `--pages all` is reasonable on a filtered query and reckless on a bare one.
+
+A note on what is deliberately absent: Gallica documents a `dewey` index that only resolves at single-digit granularity, an `sdewey` index that returns nothing, and no place-of-publication index at all. Its SRU `explain` operation currently answers HTTP 500, so the index list cannot be discovered from the service itself. Flags exist only for facets verified against the live API.
 
 Downloads are cached in `$XDG_CACHE_HOME/gallica-mcp` (override with `--cache-dir` or `GALLICA_CACHE_DIR`). The cache location does not depend on the working directory, so the CLI can be run from anywhere.
 

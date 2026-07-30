@@ -117,6 +117,10 @@ if ENABLE_ADVANCED_SEARCH:
         date_end: int | None = None,
         language: str | None = None,
         title: str | None = None,
+        subject: str | None = None,
+        publisher: str | None = None,
+        library: str | None = None,
+        min_ocr_quality: float | None = None,
         public_domain_only: bool = True,
         exact_search: bool = True,
         sort: str = DEFAULT_SORT
@@ -143,6 +147,20 @@ if ENABLE_ADVANCED_SEARCH:
             date_end: Latest publication year (inclusive). Example: 1900 (optional)
             language: Language code (ISO 639-2, 3 letters). Examples: "fre" (French), "eng" (English), "lat" (Latin) (optional)
             title: Text to search in document titles. Simple text, not boolean operators. (optional)
+            subject: BnF catalogue subject heading, in French. Example: "Prestidigitation".
+                A strict filter rather than a ranked one, so it turns a six-figure total into a
+                real result set — but headings belong to catalogue records, so this returns ZERO
+                periodical issues and must not be combined with a press sweep. Subdivisions are
+                written with two dashes: "Prestidigitation -- XIXe siècle" (optional)
+            publisher: Publisher as printed on the item. Example: "Hachette". The field also holds
+                the place of publication in parentheses ("E. Voisin (Paris)"), so a city name here
+                matches that place rather than filtering by it (optional)
+            library: Holding institution, matched against the record's provenance string.
+                Examples: "Centre National des Arts du Cirque", "département Arts du spectacle" (optional)
+            min_ocr_quality: Keep only documents whose OCR scored at least this much out of 100.
+                Very effective on this source, whose result tails are largely OCR noise, but any
+                value above 0 silently excludes material with no OCR at all, such as engravings
+                and image-only scans (optional)
             public_domain_only: Restrict to public domain documents with freely downloadable OCR (default: True).
                 Set to False to include all documents regardless of access restrictions. (optional)
             exact_search: Enable exact matching (default: True). When True, disables fuzzy matching for more precise results.
@@ -193,6 +211,15 @@ if ENABLE_ADVANCED_SEARCH:
 
             # Fuzzy matching for finding OCR variants
             advanced_search_gallica(query="Hanussen", exact_search=False)
+
+            # Subject heading: a strict filter, so the total becomes meaningful
+            advanced_search_gallica(subject="Prestidigitation")
+
+            # Readable OCR only, which is what makes a ranked tail usable
+            advanced_search_gallica(query="prestidigitation", min_ocr_quality=99)
+
+            # One specialist collection's holdings
+            advanced_search_gallica(library="Centre National des Arts du Cirque")
         """
         client = get_client()
         return await client.search(
@@ -205,6 +232,10 @@ if ENABLE_ADVANCED_SEARCH:
             date_end=date_end,
             language=language,
             title=title,
+            subject=subject,
+            publisher=publisher,
+            library=library,
+            min_ocr_quality=min_ocr_quality,
             public_domain_only=public_domain_only,
             exact_search=exact_search,
             sort=sort

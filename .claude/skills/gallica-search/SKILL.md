@@ -17,7 +17,7 @@ gallica get <ark> [--pages 30-35]  # download OCR text, prints path to the cache
 
 Note that `--pages` means different things on the two commands: *result* pages on `search`, *document* pages on `get`.
 
-Filters for `search`: `--creator NAME` (repeatable), `--type TYPE` (repeatable, from `monographie`, `périodique`, `fascicule`, `manuscrit`, `image`, `carte`, `partition`), `--from-year`, `--to-year`, `--language CODE` (ISO 639-2: `fre`, `eng`, `ger`…), `--title TEXT`, `--include-restricted`, `--fuzzy`.
+Filters for `search`: `--creator NAME` (repeatable), `--type TYPE` (repeatable, from `monographie`, `périodique`, `fascicule`, `manuscrit`, `image`, `carte`, `partition`), `--from-year`, `--to-year`, `--language CODE` (ISO 639-2: `fre`, `eng`, `ger`…), `--title TEXT`, `--subject HEADING`, `--publisher NAME`, `--library NAME`, `--min-ocr-quality SCORE`, `--include-restricted`, `--fuzzy`.
 
 `--sort` takes `relevance` (default), `date_asc` or `date_desc`.
 
@@ -45,6 +45,22 @@ Matching is exact by default. `--fuzzy` finds OCR errors and spelling variants b
 
 **Search in French, or in both languages.** The collection is French-dominant, so an English-only query will miss most of what is there: `"prestidigitation" OR "magic"`, `"lecture de pensée" OR "mind reading"`, `"voyant" OR "clairvoyant"`. Names usually carry across unchanged, but titles and honorifics do not — French press writes "le professeur Reese", not "Prof. Reese".
 
+## The four filters that actually bite
+
+Most of the filters above merely trim. These four change the character of a search, and two of them convert Gallica's ranked tail into a real result set.
+
+**`--subject HEADING`** selects on the BnF's catalogue subject headings (RAMEAU), in French. This is the sharpest instrument here, because unlike the text index it is a *strict* filter: `--subject Prestidigitation` returns **29 results**, not a six-figure tail, and all of them genuinely concern conjuring. Subdivisions are written with two dashes — `--subject 'Prestidigitation -- XIXe siecle'` gives **6 results**, among them Robert-Houdin's *Confidences et révélations*. Accents may be omitted.
+
+**The catch is severe, so read it before reaching for it:** headings live on the parent catalogue record, and periodical *issues* carry none. `--subject Prestidigitation --type fascicule` returns **zero**, and so does every combination of a subject with a press sweep. Use it to find catalogued books, prints and programmes; never to narrow newspaper coverage, where it will silently delete everything.
+
+**`--min-ocr-quality SCORE`** keeps only documents whose OCR scored at least SCORE out of 100. On a source whose central problem is illegible scans this is the most generally useful of the four: `"Tour Eiffel"` reports 622,818 results, and `--min-ocr-quality 99` cuts that to **113,479** while promoting genuinely readable documents to the top. It is also the right filter to reach for *before* `get`, since a document with bad OCR is a document you cannot quote. Any value above 0 excludes material with no OCR at all — engravings, photographs, image-only scans — so do not combine it with `--type image`.
+
+**`--publisher NAME`** matches the publisher as printed: `"Tour Eiffel" --publisher Hachette` gives **287 results** rather than 622,818. Gotcha: the field also carries the place of publication in parentheses (`E. Voisin (Paris)`), so `--publisher Paris` matches the *place*, and is not a place filter — there is no place-of-publication index on this source.
+
+**`--library NAME`** selects the holding institution, matched against the record's provenance string. This is how you reach a specialist collection whole: `--library 'Centre National des Arts du Cirque'` returns **1,028 items**, largely dated circus and variety programmes — an unusually rich seam for performance history, and browsable without a text query at all. BnF departments work the same way: `--library 'departement Arts du spectacle'`. Accents may be omitted.
+
+Combining two strict filters compounds properly: `--subject Prestidigitation --min-ocr-quality 50` gives **12 results**, a set small enough to read in full.
+
 ## The result count is not what you think it is
 
 **Gallica ranks, it does not filter.** `text adj` scores documents rather than restricting to those containing the phrase, so the reported total is a relevance tail, not a set of matches. `"Robert-Houdin"` reports **124,709 results**. The first three are his own *Album des soirées fantastiques*, a Théâtre Robert-Houdin programme, and a satirical paper reviewing him; by result fifty you are into documents with no connection to him at all.
@@ -55,13 +71,17 @@ Three consequences, and they govern how this source is used:
 - **Relevance ordering is what makes the source work.** It is the default. The material worth reading is in the first page or two, and it is genuinely good material.
 - **`--pages all` is almost never right here.** On a ranked tail it sweeps tens of thousands of non-matches, costs hours at 3s a request, and invites a ban. Narrow the query with filters until the total is plausible, *then* consider sweeping.
 
+**A strict filter repairs the total, which is the practical way out of this.** The ranking tail comes from the text index alone; the metadata filters intersect it strictly, so the reported number becomes a real count of matches again. `--subject Prestidigitation` reports 29 and means 29. That is what makes `--pages all` safe on a filtered query and reckless on a bare one — and it is the reason to spend a filter rather than to page deeper.
+
 Use `--sort date_asc` only once a query is narrowed enough that you intend to read the whole result set — a chronological reconstruction over a bounded date range, say. On an un-narrowed query, date order buries the good material behind thousands of weak matches, which is exactly the wrong thing to hand a researcher.
 
 ## Being exhaustive
 
 50 results per page — half the other sources, so page counts run higher. Periodical issues are returned individually rather than collapsed by title, so a single newspaper's coverage appears as many separate dated results; that is correct, and it is what makes date-ordered reconstruction possible.
 
-Exhaustivity on Gallica means *a well-bounded query swept completely*, not a broad query swept deeply. Bound it with `--from-year`/`--to-year`, `--language`, `--type` or `--title` first.
+Exhaustivity on Gallica means *a well-bounded query swept completely*, not a broad query swept deeply. Bound it with `--from-year`/`--to-year`, `--language`, `--type`, `--title`, `--min-ocr-quality` or `--publisher` first — and with `--subject` or `--library` when the material is catalogued rather than press.
+
+Two of those bounds cut in ways that lose real material, so choose deliberately: `--subject` deletes all periodical coverage, and `--min-ocr-quality` deletes everything unOCR'd. For a press sweep meant to be exhaustive, bound by date and type instead.
 
 By default only public-domain documents with downloadable OCR are returned. `--include-restricted` widens the net, but the extra results generally cannot be downloaded — useful for knowing something exists, not for reading it.
 
@@ -76,6 +96,9 @@ By default only public-domain documents with downloadable OCR are returned. `--i
 ## Traps specific to this source
 
 - **`--type périodique` matches nothing.** Because issues are returned individually rather than collapsed, periodicals appear as `fascicule`. Use that instead.
+- **`--subject` and a press sweep are mutually exclusive**, and the failure is silent: zero results, indistinguishable from a term nobody wrote about. If a subject-filtered search comes back empty, drop the subject before concluding anything.
+- **There is no place-of-publication filter, and `--publisher` is not one.** Gallica has no place index (`dc.coverage` does not exist there), and the publisher field carries the city in parentheses, so `--publisher Lyon` returns whatever *mentions* Lyon in that field. If you need a place, filter by `--library` or read it off the results.
+- **Subject headings and library names must be close to verbatim.** They are catalogue strings, not free text: `--library 'Arts du spectacle'` works, an invented institution returns zero. Accents can be dropped, word order cannot be invented. Take the exact string from the `source` or `subject` field of a result you already have.
 - **An anti-bot challenge can arrive as a normal-looking success** — HTTP 200 carrying an ALTCHA "Vérification de sécurité" page rather than a 429. The client detects it and refuses rather than caching it. If you see it, you have been querying too fast: **stop querying Gallica entirely and tell the user**. The block is measured in hours, not minutes, so retrying makes it worse and there is nothing to be gained by trying again in this session.
 - **`get` is metered separately from search, and far more tightly.** OCR comes from a different endpoint, which allows a short burst and then answers HTTP 429 for minutes. Search and `snippets` keep working throughout, so search answering normally is no evidence that downloads will. Measured: the fifth request of a burst was refused whether they were spaced three seconds or five, and about two minutes of quiet restored the allowance.
 - **Three different refusals, and they mean different things.** HTTP 429 is the ordinary budget running out — pages already fetched stay cached, so the same command a few minutes later resumes where it stopped. A stalled request that times out means the budget has been overdrawn repeatedly and Gallica has stopped answering that endpoint at all; treat it as a block and stop. An ALTCHA page is the site-wide block, and is the most serious. Only the first is worth waiting out.
