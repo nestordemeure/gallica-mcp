@@ -282,7 +282,7 @@ BnF publishes no rate limit for the SRU or ContentSearch endpoints - only a poli
 
 `RequestDigitalElement` is metered as a **token bucket**, not a rate, so `CrossProcessTokenBucket` (state in `.ocr-budget`) sits on top of the interval limiter for OCR requests only. Defaults: burst **4**, refill **one per 25s**, overridable with `GALLICA_OCR_BURST` and `GALLICA_OCR_REFILL_SECONDS`.
 
-Those numbers are measured, and the measurement is the argument for the shape:
+Those numbers are measured (2026-07-29, single residential IP), and the measurement is the argument for the shape:
 
 | Pacing | Successes before HTTP 429 |
 | --- | --- |
@@ -290,6 +290,8 @@ Those numbers are measured, and the measurement is the argument for the shape:
 | 5s | 4 |
 
 Slower pacing did not buy more requests, which is what rules out a simple interval — the server is counting requests in a window, not spacing between them. Roughly 120s of quiet restored the full allowance. Capacity is set to 4 rather than 5 so the client stops one short of the observed cliff.
+
+BnF publishes none of this, so it is an observation with a date on it rather than a contract. **The README's "Re-deriving these" section carries the procedure for redoing the measurement** if the ceiling ever moves; keep the two tables in step if it does.
 
 Two further behaviours the client depends on:
 

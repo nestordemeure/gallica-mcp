@@ -65,13 +65,39 @@ Search returns documents without snippets, so the workflow is search → `snippe
 
 Downloads are cached in `$XDG_CACHE_HOME/gallica-mcp` (override with `--cache-dir` or `GALLICA_CACHE_DIR`). The cache location does not depend on the working directory, so the CLI can be run from anywhere.
 
-Requests are paced one every 3 seconds by default, matching what established Gallica clients use; BnF publishes no limit for these endpoints but blocks traffic it considers abusive, serving an ALTCHA challenge page instead of results. Override with `GALLICA_MIN_REQUEST_INTERVAL` if you know what you are doing.
+### Rate limits
 
-**`get` is metered separately, and much more tightly.** Gallica serves OCR one page per request, and that endpoint allows only a short burst before answering HTTP 429 for minutes — measured at 5 requests, whether spaced 3s or 5s apart, with roughly two minutes to recover. The client therefore holds a token bucket for OCR alone: a burst of **4 pages** refilling at **one per 25 seconds**, tunable with `GALLICA_OCR_BURST` and `GALLICA_OCR_REFILL_SECONDS`.
+**None of these numbers are published by BnF.** Its stated policy for the Gallica APIs is open access "except in case of abusive usage" ([api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche)); the one published figure covers the IIIF image API, which this client does not use. Everything below is either community practice or measured against the live service, so treat it as an observation with a date on it rather than a contract — and see *Re-deriving these* if the client starts getting refused where it used to work.
 
-So a handful of pages found via `snippets` costs seconds, an 8-page newspaper issue about two minutes, and a 200-page book over an hour. `get` declines documents longer than 20 pages unless you pass `--pages` (or `--pages all` to mean it). Pages are cached individually, so a download interrupted by the rate limit resumes rather than restarts.
+There are two separate budgets, and both are shared across processes via lock files in the cache directory, so parallel invocations draw on one allowance rather than each getting its own.
 
-Both budgets are shared across processes, so parallel invocations draw on one allowance rather than each getting its own.
+**Search and snippets** are paced at one request every **3 seconds**, following established Gallica clients such as [bnfimage](https://rekyt.github.io/bnfimage/) and [bnf_downloader](https://github.com/yoshimitsuhiro/bnf_downloader), which treat that as the point above which BnF starts reading traffic as malicious. Community practice, not measurement. Override with `GALLICA_MIN_REQUEST_INTERVAL`.
+
+**OCR download is metered separately and much more tightly**, because Gallica serves it one page per request from `RequestDigitalElement`. Measured 2026-07-29 from a single residential IP:
+
+| Pacing between requests | Successes before HTTP 429 |
+| --- | --- |
+| 3s | 5 |
+| 5s | 4 |
+
+Roughly 120 seconds of quiet restored the allowance. **Slower pacing bought fewer requests, not more** — which is the interesting part: it rules out a rate limit, because the server is counting requests in a window rather than measuring the gap between them. So the client models it as a token bucket: a burst of **4 pages** refilling at **one per 25 seconds**, set one step under the observed cliff. Override with `GALLICA_OCR_BURST` and `GALLICA_OCR_REFILL_SECONDS`.
+
+The 120s recovery figure is from probing rather than from the server; the client does not read a `Retry-After` header, and whether one is sent was not checked.
+
+One further behaviour, same session: **sustained overdraw stops producing 429s and starts stalling.** After repeated refusals the endpoint simply stops answering and the connection times out. The client reports a timeout there as a block rather than a network fault, because retrying it is exactly wrong.
+
+In practice: a handful of pages found via `snippets` costs seconds, an 8-page newspaper issue about two minutes, and a 200-page book over an hour. `get` declines documents longer than 20 pages unless you pass `--pages` (or `--pages all` to mean it). Pages are cached individually, so a download interrupted by the rate limit resumes rather than restarts.
+
+#### Re-deriving these
+
+If downloads start failing at counts these defaults should allow, the ceiling has moved and the measurement is worth redoing. It costs about ten minutes:
+
+1. Leave Gallica alone for several minutes, so the bucket is full and you are measuring the limit rather than your own recent traffic.
+2. Request consecutive ALTO pages of one public-domain document at a fixed spacing, recording the status of each: `https://gallica.bnf.fr/RequestDigitalElement?O=<id>&E=ALTO&Deb=<n>`. Stop at the first 429 — that count is the burst.
+3. Repeat at a different spacing. If the count does not rise with the gap, it is still a bucket and only the capacity changed.
+4. Wait, and probe single requests to find how long recovery takes. Divide by the burst for the refill rate.
+
+Set `GALLICA_OCR_BURST` one below the smallest observed failure point, and update the table above with the new date. Do not run this while doing real research — it deliberately ends in a block, and a stalled endpoint takes a good while to come back.
 
 ### MCP server
 
