@@ -1,19 +1,19 @@
 # Gallica MCP Server
 
-MCP server for searching and retrieving documents from Gallica, the digital library of the Bibliothèque nationale de France (BnF).
+An MCP server for a search of Gallica, the digital library of the Bibliothèque nationale de France (BnF), and for retrieval of its documents.
 
 ## Stack
 
 - Python ≥3.12, uv, fastMCP ≥2.0.0, httpx ≥0.27.0
 
-## Functionality
+## Functions
 
-- **Fulltext search** with CQL operators (AND, OR, NOT, exact phrases)
-- **Exact vs. fuzzy matching** control (exact matching by default)
-- **Access rights filtering** for public domain documents (downloadable OCR)
-- **Text snippets** showing search terms in context (via optional get_snippets tool using ContentSearch API)
-- **OCR text download** by page range, with per-page local caching
-- **Pagination support** (up to 50 results per page)
+- **A full-text search** with the CQL operators (AND, OR, NOT, exact phrases)
+- **Control of exact matching against fuzzy matching** (exact matching is the default)
+- **A filter on the access rights**, for public-domain documents with an OCR download
+- **Text snippets** that show the search terms in context (through the optional `get_snippets` tool, which uses the ContentSearch API)
+- **An OCR text download** by page range, with a local cache for each page
+- **Pagination** up to 50 results for each page
 
 ## Structure
 
@@ -33,7 +33,7 @@ gallica-mcp/
 └── CLAUDE.md               # This file
 ```
 
-`client.py` holds all the behaviour; `server.py` and `cli.py` are thin presentation layers over it, so search semantics and caching stay identical no matter how it is called. The CLI exposes every filter unconditionally, where the MCP server hides them behind `--enable-advanced-search`.
+`client.py` holds all the behaviour. `server.py` and `cli.py` are thin presentation layers over it, so the search semantics and the cache stay identical for each method of access. The CLI shows each filter without a condition. The MCP server hides them behind `--enable-advanced-search`.
 
 ## API Details
 
@@ -42,29 +42,29 @@ gallica-mcp/
 - Base URL: `https://gallica.bnf.fr/SRU`
 - Query language: CQL (Contextual Query Language)
 - Response format: XML with Dublin Core metadata
-- **Collapsing:** Uses `collapsing=false` parameter to return all individual periodical issues separately (not collapsed by collection)
+- **Collapsing:** the client uses the `collapsing=false` parameter, so the server returns each periodical issue separately and does not group them by collection
 
 **ContentSearch API:**
 - Base URL: `https://gallica.bnf.fr/services/ContentSearch`
-- Returns text snippets with search terms highlighted
-- Used by the `get_snippets` tool (requests go through the rate limiter: default one request per 3s, single concurrency)
+- Returns text snippets with the search terms highlighted
+- The `get_snippets` tool uses it. The requests pass through the rate limiter: one request each 3s by default, with one request at a time.
 
-**Text Retrieval (ALTO, page by page):**
+**Text Retrieval (ALTO, one page at a time):**
 - OCR: `https://gallica.bnf.fr/RequestDigitalElement?O=<id>&E=ALTO&Deb=<page>`
 - Page count: `https://gallica.bnf.fr/services/Pagination?ark=<id>` — `nbVueImages` and `hasContent`
-- Both take the **bare document id** (`bpt6k5619759j`), not the full ARK the SRU reports; `_document_id` strips it
-- Document identifiers elsewhere: ARK format (`ark:/12148/...`)
+- Both take the **bare document id** (`bpt6k5619759j`), not the full ARK that the SRU reports. `_document_id` removes the prefix.
+- Document identifiers elsewhere: the ARK format (`ark:/12148/...`)
 
-**`.texteBrut` is no longer usable, and this is why the client stopped using it.**
-`https://gallica.bnf.fr/[ark].texteBrut` returned a whole document's OCR in one
-request, which is why it was the original implementation. It now redirects to
+**`.texteBrut` is not usable now, and this is why the client stopped its use.**
+`https://gallica.bnf.fr/[ark].texteBrut` gave the full OCR of a document in one
+request, which is why it was the first implementation. It now redirects to
 `/services/engine/search/altcha` and serves the anti-bot challenge
-*unconditionally* — verified on a cold connection with no recent traffic, with
-both the client's own User-Agent and a full browser one, while SRU search
-answered normally seconds either side. It is not throttling and it is not
-fixable from here. ALTO is the documented alternative
-([api.bnf.fr](https://api.bnf.fr/fr/api-document-de-gallica)) and it works, at
-the cost of one request per page.
+*without a condition*. The tests confirmed this on a cold connection with no recent traffic, with
+the User-Agent of the client and with a full browser User-Agent, while the SRU search
+answered normally seconds before and after. This is not a rate limit, and we cannot
+correct it from here. ALTO is the documented alternative
+([api.bnf.fr](https://api.bnf.fr/fr/api-document-de-gallica)) and it operates, at
+the cost of one request for each page.
 
 ## Usage
 
@@ -82,7 +82,7 @@ uv run gallica-mcp-install
 uv run gallica-mcp-install --enable-advanced-search
 ```
 
-The `--enable-advanced-search` flag enables the `advanced_search_gallica` tool. Without it, only `search_gallica`, `get_snippets`, and `download_text` are available.
+The `--enable-advanced-search` flag enables the `advanced_search_gallica` tool. Without it, only `search_gallica`, `get_snippets` and `download_text` are available.
 
 **Search Examples:**
 ```python
@@ -131,53 +131,53 @@ get_snippets(identifier="ark:/12148/bpt6k5619759j", query="magic AND (illusion O
 
 ## Search Interface
 
-Three main tools are available (advanced search is optional):
+Three main tools are available. The advanced search is optional.
 
-**`search_gallica(query, page=1, sort="relevance")`** - Text search with boolean operators (always available)
-- Query supports CQL boolean operators: AND, OR, NOT
-- Exact phrase matching with quotes: "Harry Houdini"
+**`search_gallica(query, page=1, sort="relevance")`** - a text search with boolean operators (always available)
+- The query supports the CQL boolean operators: AND, OR, NOT
+- Exact phrase matching with quotation marks: "Harry Houdini"
 - Grouping with parentheses: (A OR B) AND C
-- Searches across all OCR content
-- Returns document metadata (without snippets for faster searches)
+- Searches all of the OCR content
+- Returns the document metadata (without snippets, for a faster search)
 
-**`get_snippets(identifier, query)`** - Fetch text excerpts for a specific document (always available)
-- Takes a document identifier (ARK) and search query
-- Returns text snippets showing where search terms appear
-- Includes page numbers for each snippet (e.g., "PAG_200" for page 200)
-- Useful for locating specific content within a document after searching
+**`get_snippets(identifier, query)`** - fetches the text extracts for one document (always available)
+- Takes a document identifier (ARK) and a search query
+- Returns the text snippets that show where the search terms appear
+- Includes a page number for each snippet (for example, "PAG_200" for page 200)
+- Useful when you must find specific content inside a document after a search
 
-**`advanced_search_gallica(...)`** - Advanced search with filters (optional, enabled with `--enable-advanced-search`)
-- All parameters are optional (except defaults)
-- Same query syntax as search_gallica (with boolean support)
-- Provides separate parameters for common filters:
+**`advanced_search_gallica(...)`** - a search with filters (optional, enabled with `--enable-advanced-search`)
+- Each parameter is optional, except the defaults
+- The same query syntax as `search_gallica`, with boolean support
+- Gives separate parameters for the common filters
 
 ### Query Syntax
 
-**IMPORTANT:** By default, searches use **exact matching** for precise results. The `exact_search` parameter in `advanced_search_gallica` can be set to `False` to enable fuzzy matching (which may find OCR errors and variants).
+**IMPORTANT:** by default a search uses **exact matching**, which gives precise results. Set the `exact_search` parameter of `advanced_search_gallica` to `False` to enable fuzzy matching, which can find OCR errors and variants.
 
-The `query` parameter supports:
+The `query` parameter supports these forms:
 
-1. **Simple text** - All words must appear (AND logic by default)
+1. **Simple text** - each word must appear (AND logic by default)
    - `"Houdini"` → finds "Houdini"
-   - `"magic tricks"` → finds both "magic" AND "tricks" (any order)
+   - `"magic tricks"` → finds both "magic" AND "tricks" (in any order)
 
-2. **Exact phrases** - Use double quotes for phrase matching
-   - `'"Harry Houdini"'` → exact phrase only
-   - `'"hanussen"'` → exact word only
+2. **Exact phrases** - use double quotation marks for a phrase match
+   - `'"Harry Houdini"'` → the exact phrase only
+   - `'"hanussen"'` → the exact word only
 
-3. **AND operator** - Explicit AND (uppercase)
+3. **AND operator** - an explicit AND (uppercase)
    - `"magic AND illusion"` → both must appear
    - `"Paris AND France"` → both must appear
 
-4. **OR operator** - Either term (uppercase)
+4. **OR operator** - either term (uppercase)
    - `"Houdini OR Houdin"` → either name
    - `"escape OR évasion"` → either term
 
-5. **NOT operator** - Exclude terms (uppercase)
+5. **NOT operator** - excludes terms (uppercase)
    - `"magic NOT card"` → "magic" yes, "card" no
    - `"Paris NOT Texas"` → "Paris" yes, "Texas" no
 
-6. **Parentheses** - Group operations
+6. **Parentheses** - group the operations
    - `"(Houdini OR Houdin) AND escape"` → (either name) AND escape
    - `"magic AND (illusion OR trick)"` → magic AND (either illusion or trick)
 
@@ -185,31 +185,31 @@ The `query` parameter supports:
    - `'"Harry Houdini" AND (escape OR illusion) NOT death'`
    - `'("Robert-Houdin" OR Houdini) AND (magic OR prestidigitation)'`
 
-**Important:** Operators (AND, OR, NOT) must be UPPERCASE
+**Important:** the operators (AND, OR, NOT) must be UPPERCASE.
 
 **Parameters:**
-- `query` (str) - Text to search in OCR content (simple text, not CQL)
-- `page` (int) - Page number for pagination (default: 1)
-- `creators` (list[str]) - Filter by author names (OR logic)
-- `doc_types` (list[str]) - Filter by document types (OR logic)
-- `date_start` (int) - Earliest publication year (inclusive)
-- `date_end` (int) - Latest publication year (inclusive)
-- `language` (str) - Language code (ISO 639-2, 3 letters)
-- `title` (str) - Text to search in document titles
-- `subject` (str) - BnF catalogue subject heading, French, subdivided with ` -- `
-- `publisher` (str) - Publisher as printed on the item
-- `library` (str) - Holding institution, matched against `dc.source`
-- `min_ocr_quality` (float) - Lowest acceptable OCR score, 0-100
-- `public_domain_only` (bool) - Restrict to public domain documents with downloadable OCR (default: True)
-- `exact_search` (bool) - Enable exact matching (default: True). Set to False for fuzzy matching
+- `query` (str) - the text to search in the OCR content (simple text, not CQL)
+- `page` (int) - the page number for pagination (default: 1)
+- `creators` (list[str]) - filter by author names (OR logic)
+- `doc_types` (list[str]) - filter by document types (OR logic)
+- `date_start` (int) - the earliest publication year (inclusive)
+- `date_end` (int) - the latest publication year (inclusive)
+- `language` (str) - a language code (ISO 639-2, 3 letters)
+- `title` (str) - the text to search in the document titles
+- `subject` (str) - a BnF catalogue subject heading, in French, subdivided with ` -- `
+- `publisher` (str) - the publisher as printed on the item
+- `library` (str) - the institution that holds the item, matched against `dc.source`
+- `min_ocr_quality` (float) - the lowest acceptable OCR score, 0-100
+- `public_domain_only` (bool) - limits the results to public-domain documents with an OCR download (default: True)
+- `exact_search` (bool) - enables exact matching (default: True). Set it to False for fuzzy matching.
 
 **Document Types:**
-- `monographie` - Books
-- `périodique` - Periodicals/journals
-- `manuscrit` - Manuscripts
-- `image` - Images
-- `carte` - Maps and plans
-- `partition` - Musical scores
+- `monographie` - books
+- `périodique` - periodicals and journals
+- `manuscrit` - manuscripts
+- `image` - images
+- `carte` - maps and plans
+- `partition` - musical scores
 
 **Language Codes (ISO 639-2):**
 - `fre` - French
@@ -219,160 +219,160 @@ The `query` parameter supports:
 - `ita` - Italian
 - `spa` - Spanish
 
-## Search Behavior
+## Search Behaviour
 
-### Exact vs. Fuzzy Matching
+### Exact matching against fuzzy matching
 
-**Default: Exact Matching** (`exact_search=True`)
-- Searches are precise, matching only exact terms
+**Default: exact matching** (`exact_search=True`)
+- The search is precise, and it matches only the exact terms
 - "Hanussen" finds only "Hanussen" (465 results)
-- Recommended for most use cases
+- We recommend this for most uses
 
-**Fuzzy Matching** (`exact_search=False`)
-- Searches find variants and OCR errors
-- "Hanussen" finds "Hanussen", "Haussen", "Hansen", etc. (6,450 results)
-- Useful for finding documents with OCR errors
-- Can produce many irrelevant results
+**Fuzzy matching** (`exact_search=False`)
+- The search finds variants and OCR errors
+- "Hanussen" finds "Hanussen", "Haussen", "Hansen" and more (6,450 results)
+- Useful when you must find documents with OCR errors
+- Can give many irrelevant results
 
-**Note:** Using quotes in the query (e.g., `'"exact phrase"'`) always forces exact phrase matching regardless of the `exact_search` setting.
+**Note:** quotation marks in the query (for example `'"exact phrase"'`) always force an exact phrase match, whatever the `exact_search` setting.
 
-### Public Domain Filtering
+### The public-domain filter
 
-**By default**, searches return only **public domain documents** with freely downloadable OCR (`public_domain_only=True`).
+**By default**, a search returns only **public-domain documents** with an OCR text that a person can download freely (`public_domain_only=True`).
 
-To include **all documents** regardless of access restrictions:
+To include **all documents**, whatever their access restrictions:
 
 ```python
 # Include documents with usage restrictions
 advanced_search_gallica(query="prestidigitation", public_domain_only=False)
 ```
 
-**Default behavior:**
-- Only public domain documents are returned using the filter: `dc.rights any "domaine public"`
-- All documents have downloadable OCR text
-- Ensures users can access the full text of search results
-- **Excludes restricted documents** such as RetroNews partnership newspapers that require institutional access
+**Default behaviour:**
+- The server returns only public-domain documents, through the filter `dc.rights any "domaine public"`
+- Each document has an OCR text that a person can download
+- Thus each user can read the full text of the search results
+- This **excludes restricted documents**, such as the RetroNews partnership newspapers, which need institutional access
 
-**Note:** The filter uses `dc.rights any "domaine public"` rather than `access any "fayes"` because the latter can return documents marked as "restricted use" (such as BnF-partenariats newspapers) that require special accreditation to download.
+**Note:** the filter uses `dc.rights any "domaine public"` and not `access any "fayes"`, because the second form can return documents marked as "restricted use" (such as the BnF-partenariats newspapers) that need a special accreditation before a person can download them.
 
 ## Internal CQL Generation
 
-The client automatically builds CQL queries from the parameters:
-- Text query: `text all "query"` (processed by query parser)
-- Multiple creators use OR logic: `(dc.creator all "A" or dc.creator all "B")`
-- Multiple doc types use OR logic: `(dc.type adj "A" or dc.type adj "B")`
-- Subject / publisher / library: `dc.subject all`, `dc.publisher all`, `dc.source all`
-- OCR floor: `ocrquality >= "NN.NN"`, formatted to two decimals because the index compares as a string
-- Every filter value passes through `escape_cql_literal`, since an unescaped `"` would close the literal early and get the query rejected
-- Public domain filter: `dc.rights any "domaine public"` (applied by default)
-- All filters are combined with AND logic
-- SRU parameter `exactSearch` controls fuzzy matching behavior
-- Ordering is appended last, from `SORT_CLAUSES` (see below)
+The client builds the CQL queries from the parameters:
+- Text query: `text all "query"` (the query parser processes it)
+- Several creators use OR logic: `(dc.creator all "A" or dc.creator all "B")`
+- Several doc types use OR logic: `(dc.type adj "A" or dc.type adj "B")`
+- Subject, publisher and library: `dc.subject all`, `dc.publisher all`, `dc.source all`
+- OCR floor: `ocrquality >= "NN.NN"`, formatted to two decimals because the index compares it as a string
+- Each filter value passes through `escape_cql_literal`, because an unescaped `"` would close the literal early and the server would reject the query
+- Public-domain filter: `dc.rights any "domaine public"` (applied by default)
+- The client combines each filter with AND logic
+- The SRU parameter `exactSearch` controls the fuzzy-matching behaviour
+- The client appends the ordering last, from `SORT_CLAUSES` (see below)
 
 ## Result Ordering
 
-`sort` accepts `relevance` (default), `date_asc` or `date_desc`, sharing the vocabulary of the sibling archive clients. Relevance is expressed by omitting `sortby` altogether — Gallica has no relevance sort key, it is simply what you get by not asking for anything else.
+`sort` takes `relevance` (default), `date_asc` or `date_desc`. This is the vocabulary of the client of each other archive. The client expresses relevance when it omits `sortby` completely. Gallica has no relevance sort key: relevance is what you receive when you ask for nothing else.
 
-**Why relevance is the default.** The client previously appended `sortby dc.date/sort.ascending` unconditionally, which was close to unusable. Gallica's `text adj` ranks rather than filters, so a phrase search reports a long relevance tail: `"Robert-Houdin"` returns ~125,000 results whose first page is his own *Album des soirées fantastiques* and a programme from his theatre, and whose depths are unrelated. Forcing date order put a 1705 treatise on Paris rôtisseurs at position one and buried every genuinely relevant document thousands of results deep. Date order remains available because chronological reconstruction over a bounded range is a real use case; it is just the wrong default.
+**Why relevance is the default.** An earlier version of the client appended `sortby dc.date/sort.ascending` without a condition, which was almost unusable. The `text adj` operator of Gallica ranks the documents. It does not filter them. Thus a phrase search reports a long relevance tail: `"Robert-Houdin"` gives approximately 125,000 results, whose first page is his own *Album des soirées fantastiques* and a programme from his theatre, and whose low positions are unrelated. A forced date order put a 1705 treatise on the rôtisseurs of Paris at position one, and it put each relevant document thousands of results lower. The date order stays available, because a chronological reconstruction over a limited range is a real use. It is only the incorrect default.
 
-A consequence worth carrying into any interface built on this: `total_results` is a ranking depth, not a count of documents containing the term, and must never be presented as one.
+One consequence is important for each interface built on this client: `total_results` is a rank depth, not a count of the documents that contain the term, and you must never present it as one.
 
 ## Rate Limiting
 
-Requests are spaced by a cross-process rate limiter (`ratelimit.py`), default **3s**, overridable with `GALLICA_MIN_REQUEST_INTERVAL`, on top of an in-process semaphore limiting concurrency.
+A cross-process rate limiter (`ratelimit.py`) paces the requests. The default is **3s**, and `GALLICA_MIN_REQUEST_INTERVAL` changes it. An in-process semaphore also limits the concurrency.
 
-BnF publishes no rate limit for the SRU or ContentSearch endpoints - only a policy of open access "except in case of abusive usage" ([api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche)). The one published figure covers the IIIF image API, which this client does not use. The 3s default follows established Gallica clients such as [bnfimage](https://rekyt.github.io/bnfimage/) and [bnf_downloader](https://github.com/yoshimitsuhiro/bnf_downloader), which treat one request per three seconds as the threshold above which BnF reads traffic as malicious. That figure is community practice rather than official documentation, but the downside is asymmetric: exceeding it costs hours of blocked access, while pacing conservatively costs seconds.
+The BnF publishes no rate limit for the SRU endpoints or the ContentSearch endpoints. It publishes only a policy of open access "except in case of abusive usage" ([api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche)). The one published figure covers the IIIF image API, which this client does not use. The 3s default follows the established Gallica clients, such as [bnfimage](https://rekyt.github.io/bnfimage/) and [bnf_downloader](https://github.com/yoshimitsuhiro/bnf_downloader), which use one request each three seconds as the rate above which the BnF reads the traffic as an attack. That figure is community practice and not official documentation, but the risk is asymmetric: to go above it costs hours of blocked access, and to pace the requests carefully costs seconds.
 
-**Why cross-process rather than an instance attribute.** An instance attribute was adequate while the only caller was a long-lived MCP server. It is not adequate now: every CLI invocation is a separate process with its own instance, and callers are expected to fan work out across several at once, so an instance attribute paces nothing. The limiter keeps its timestamp in `.rate-limit` inside the cache directory, guarded by an exclusive `flock`, which every process sharing that cache observes.
+**Why the limiter operates across processes, and not as an instance attribute.** An instance attribute was sufficient while the only caller was a long-lived MCP server. It is not sufficient now: each call of the CLI is a separate process with its own instance, and we expect the caller to run several at the same time. Thus an instance attribute paces nothing. The limiter keeps its timestamp in `.rate-limit` inside the cache directory, with an exclusive `flock` to guard it, and each process that shares that cache obeys it.
 
-### The OCR endpoint has a second, tighter budget
+### The OCR endpoint has a second and tighter budget
 
-`RequestDigitalElement` is metered as a **token bucket**, not a rate, so `CrossProcessTokenBucket` (state in `.ocr-budget`) sits on top of the interval limiter for OCR requests only. Defaults: burst **4**, refill **one per 25s**, overridable with `GALLICA_OCR_BURST` and `GALLICA_OCR_REFILL_SECONDS`.
+The server meters `RequestDigitalElement` as a **token bucket**, not as a rate. Thus `CrossProcessTokenBucket` (state in `.ocr-budget`) sits on top of the interval limiter, for the OCR requests only. Defaults: a burst of **4**, and a refill of **one each 25s**. `GALLICA_OCR_BURST` and `GALLICA_OCR_REFILL_SECONDS` change them.
 
-Those numbers are measured (2026-07-29, single residential IP), and the measurement is the argument for the shape:
+These numbers come from measurements (2026-07-29, one residential IP address), and the measurement is the argument for the shape:
 
 | Pacing | Successes before HTTP 429 |
 | --- | --- |
 | 3s | 5 |
 | 5s | 4 |
 
-Slower pacing did not buy more requests, which is what rules out a simple interval — the server is counting requests in a window, not spacing between them. Roughly 120s of quiet restored the full allowance. Capacity is set to 4 rather than 5 so the client stops one short of the observed cliff.
+A slower pace did not buy more requests, which is what excludes a simple interval: the server counts the requests in a window. It does not measure the space between them. Approximately 120s with no requests restored the full allowance. The capacity is 4 and not 5, so the client stops one request before the observed limit.
 
-BnF publishes none of this, so it is an observation with a date on it rather than a contract. **The README's "Re-deriving these" section carries the procedure for redoing the measurement** if the ceiling ever moves; keep the two tables in step if it does.
+The BnF publishes none of this, so it is an observation with a date on it and not a contract. **The "Re-deriving these" section of the README carries the procedure for a new measurement** if the limit ever moves. Keep the two tables in agreement if it does.
 
-Two further behaviours the client depends on:
+The client depends on two more behaviours:
 
-- **A 429 drains the bucket** (`CrossProcessTokenBucket.drain`). The refusal proves the real budget was lower than the bucket believed, so leaving tokens in it would let the next call - very possibly another process - spend one the server will not honour.
-- **Sustained overdraw stops producing 429s and starts stalling.** After repeated refusals the endpoint simply does not answer and the connection times out. `_retrieve_alto_page` catches `httpx.TimeoutException` separately and reports it as a block rather than a network blip, because retrying it is exactly wrong.
+- **An HTTP 429 empties the bucket** (`CrossProcessTokenBucket.drain`). The refusal proves that the real budget was lower than the value in the bucket. Thus to leave tokens in it would let the next call — very possibly another process — spend one that the server will not honour.
+- **Sustained overdraw stops the HTTP 429 responses and starts a stall.** After repeated refusals the endpoint simply does not answer, and the connection times out. `_retrieve_alto_page` catches `httpx.TimeoutException` separately and reports it as a block and not as a temporary network fault, because a second attempt is exactly the wrong action.
 
 ## Caching
 
-- **Cache:** OCR text, **per page** under `pages/<doc_id>/pNNNNN.txt`, plus the assembled file the caller is handed
-- **Don't cache:** Search results (small, dynamic)
-- **Location:** `$XDG_CACHE_HOME/gallica-mcp/`, resolved by `paths.cache_dir()`; override with `--cache-dir` or `GALLICA_CACHE_DIR`
+- **Cache:** the OCR text, **for each page**, under `pages/<doc_id>/pNNNNN.txt`, plus the assembled file that the caller receives
+- **Do not cache:** the search results (small, dynamic)
+- **Location:** `$XDG_CACHE_HOME/gallica-mcp/`, resolved by `paths.cache_dir()`; change it with `--cache-dir` or `GALLICA_CACHE_DIR`
 
-The cache must not depend on the working directory: the CLI is installed globally and run from whatever project the researcher is in, so a CWD-relative cache would scatter downloads and destroy the hit rate.
+The cache must not depend on the working directory. The CLI has a global installation and runs from whichever project the researcher is in, so a cache relative to the working directory would put the downloads in many places and would destroy the hit rate.
 
-**Per page, not per document, and that is load-bearing.** A download long enough to exhaust the OCR budget *will* be cut off part way through. Caching each page as it arrives means re-running the same command resumes rather than restarts - which matters when every wasted request is drawn from a budget of four. Caching only the finished document would throw away the whole burst on each attempt and guarantee the download could never complete.
+**The cache holds each page, not each document, and this is necessary.** A download long enough to empty the OCR budget *will* stop part of the way through. When the client caches each page as it arrives, a second run of the same command continues instead of a restart. That is important when each wasted request comes from a budget of four. A cache of the finished document only would discard the full burst on each attempt, and would make the download impossible to complete.
 
-The assembled file is named for the range: `<doc_id>.txt` for a whole document, `<doc_id>.p30-35.txt` for a slice. It carries `--- page N ---` markers, because the point of the snippet workflow is to arrive at a citable page reference and flattening that away would discard it.
+The client names the assembled file for the range: `<doc_id>.txt` for a full document, and `<doc_id>.p30-35.txt` for a part. It carries `--- page N ---` markers, because the purpose of the snippet procedure is to arrive at a page reference that a person can cite, and to remove that would discard it.
 
 ## Document Types
 
-- `monographie` - Books
-- `périodique` - Periodicals (collections)
-- `fascicule` - Individual periodical issues
-- `manuscrit` - Manuscripts
-- `image` - Images
-- `carte` - Maps and plans
-- `partition` - Musical scores
+- `monographie` - books
+- `périodique` - periodicals (collections)
+- `fascicule` - individual periodical issues
+- `manuscrit` - manuscripts
+- `image` - images
+- `carte` - maps and plans
+- `partition` - musical scores
 
 ## Periodical Handling
 
-**Important:** With `collapsing=false`, the server returns individual periodical issues as separate results rather than grouping them by collection.
+**Important:** with `collapsing=false`, the server returns each periodical issue as a separate result. It does not group them by collection.
 
-**Example:** Searching for "Hanussen" returns:
-- Without `collapsing=false`: 167 results (one per periodical collection)
+**Example:** a search for "Hanussen" gives these results:
+- Without `collapsing=false`: 167 results (one for each periodical collection)
 - With `collapsing=false`: 465 results (each periodical issue counted separately)
 
-For a periodical like "Istanbul" that has 6 issues mentioning "Hanussen", all 6 issues are returned as individual results with:
-- Unique `dc:identifier` for each issue (e.g., `ark:/12148/bd6t552367k`)
-- Specific publication dates (e.g., `1921-05-02`, `1921-05-05`, etc.)
-- `dc:type` set to `fascicule` instead of `périodique`
+For a periodical such as "Istanbul", which has 6 issues that mention "Hanussen", the server returns all 6 issues as individual results with these properties:
+- A unique `dc:identifier` for each issue (for example, `ark:/12148/bd6t552367k`)
+- A specific publication date (for example, `1921-05-02`, `1921-05-05`)
+- `dc:type` set to `fascicule` and not to `périodique`
 - Each issue can be downloaded and searched independently
 
-This ensures users see **all matching content**, not just one arbitrary issue per periodical.
+Thus each user sees **all of the content that matches**, and not one arbitrary issue for each periodical.
 
 ## Notes
 
-- Maximum 50 results per page (API limit)
-- OCR text files can be very large (100KB-1MB+)
-- Documents use ARK (Archival Resource Key) identifiers
-- All text is UTF-8 encoded
-- Search results include all individual periodical issues (not collapsed)
-- Use `get_snippets` to fetch text excerpts for specific documents after searching
+- A maximum of 50 results for each page (an API limit)
+- The OCR text files can be very large (100KB-1MB or more)
+- The documents use ARK (Archival Resource Key) identifiers
+- All of the text is UTF-8
+- The search results include each individual periodical issue (not collapsed)
+- Use `get_snippets` to fetch the text extracts for a specific document after a search
 
-## Gotchas
+## Known behaviours and risks
 
-- **User-Agent is mandatory.** Gallica answers httpx's default `python-httpx/...` agent with `403 Forbidden`. `client.py` sets an explicit `USER_AGENT`; do not remove it.
-- **ContentSearch payloads are escaped twice.** Markup arrives as `&lt;span&gt;` and accents as `&amp;#233;`, so `_clean_snippet()` unescapes, converts the highlight span to `{braces}`, strips remaining markup, then unescapes again.
-- **Date filtering uses `gallicapublication_date`, not `dc.date`.** `dc.date` is a string index: a relational comparison against it either errors or silently matches nothing, so every date-filtered search quietly returned zero results. The working index wants full `YYYY/MM/DD` bounds.
-- **A rejected query returns HTTP 200 with an SRU diagnostic**, not an error status. Left unchecked that reads as "0 results", making a malformed filter indistinguishable from a search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
-- **An anti-bot challenge also returns HTTP 200.** When Gallica decides it is being crawled it serves an ALTCHA "Vérification de sécurité" page, byte-identical whatever document was requested, served with HTTP 200 rather than 429. It was being stripped of markup and cached as the document's text, so every later read returned the challenge instead - silently and permanently. `_is_challenge_page` detects it and `download_text` refuses to cache it. The challenge is valid 24 hours, so a client that hits it should stop rather than retry.
-- **`dc.type périodique` matches nothing** while `collapsing=false` is set, since issues are returned individually as `fascicule`.
-- **`dc.subject` silently excludes all periodical issues.** Subject headings hang off the parent catalogue record, so `dc.subject all "X" and dc.type adj "fascicule"` is always zero — verified live. A subject filter combined with a press sweep returns nothing and looks exactly like a term nobody used.
-- **There is no place-of-publication index.** `dc.coverage` does not exist (the server answers "There are no translation for the following key"), and `dc.publisher` conflates publisher and place — its values look like `E. Voisin (Paris)`, and `dc.publisher all "Paris"` returns 3.8M records. A `--place` flag would therefore be a lie; do not add one.
-- **`dewey` only resolves at single-digit granularity, and `sdewey` does not resolve at all.** `dewey any "7"` narrows (193,864 → 4,653 on a text query); `dewey any "79"` and `dewey any "793"` both return zero, despite BnF documenting detailed codes. Ten buckets is too coarse to expose, so it is not wired up.
-- **`provenance` works but does not discriminate here.** It is a genuine strict filter (`provenance adj "erara.ch"` alone returns 144,196), but the text index's ranked tail is entirely `bnf.fr`: adding `provenance adj "bnf.fr"` to a text query changes the total by nothing, and `erara.ch` takes it to zero. Not worth a flag.
-- **`dc.format` is a grab-bag** — physical description, MIME type and view count share the field (`1 vol. (66 p.) : fig. ; in-16`, `image/jpeg`, `Nombre total de vues : 76`). Media type is what `dc.type` is for, so no `--format` flag.
-- **SRU `explain` answers HTTP 500** (a Tomcat "Could not resolve view with name 'error'"), so the index list cannot be discovered from the service. The documented list lives at [api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche) and does not entirely match reality — verify any new index live before exposing it.
-- **A strict metadata filter converts the ranked tail into a real count.** `dc.subject all "Prestidigitation"` reports 39, not six figures, and intersects properly with a text clause (10 with `text adj "gobelet"`). This is the only reliable way to make `total_results` mean something on this source.
-- **`texteBrut` is gated unconditionally; do not "fix" the download path by going back to it.** It is the obvious one-request-per-document endpoint and it is a dead end — see **Text Retrieval** above for what was tested. The per-page ALTO path is slower by design, not by oversight.
-- **ALTO lies about its encoding.** The XML prolog says `ISO-8859-1`; the bytes are UTF-8. Trusting the declaration renders every accented French word as mojibake (`SCÃNE` for `SCÈNE`), which is quietly corrupting rather than loudly broken — it would survive into quoted material in a report. `alto.py` strips the prolog and decodes as UTF-8.
-- **Hyphenated words are stored twice in ALTO.** A word broken across a line break appears as two `String` elements carrying `SUBS_TYPE="HypPart1"`/`"HypPart2"`, each with the whole word in `SUBS_CONTENT`. Emitting `CONTENT` naively yields `con- noitre`, which no search over the downloaded text will match. `_line_to_text` emits `SUBS_CONTENT` on the first half and drops the second.
-- **ALTO block structure has to be preserved.** A newspaper page is columns of unrelated articles; flattening `TextBlock`s into one paragraph glues the end of one story to the start of another and manufactures false adjacency — the kind of error that produces a confident misquotation.
-- **The OCR services want the bare id, not the ARK.** `RequestDigitalElement` and `Pagination` take `bpt6k5619759j`, while the SRU reports `ark:/12148/bpt6k5619759j`.
-- **An empty page is normal.** Illustration plates and blank leaves return valid ALTO with no `String` content. `download_text` reports which pages were empty and only raises if *every* requested page was, since that is the image-only case.
-- **Hyphenated terms are indexed as separate tokens.** ContentSearch highlights `{Robert}-{Houdin}` as two spans, so hyphenated names match loosely and inflate totals.
-- **A malformed search record raises.** `_parse_record` used to swallow every exception and return None, which dropped the record from the results while the reported total still counted it - a search that silently under-reported. For a tool whose value rests on exhaustivity, a loud failure beats a quiet omission.
-- **An empty result set is one empty page**, `total_pages: 1`. The API implies zero; the client normalises it so callers behave the same here as for any other source.
+- **The User-Agent is mandatory.** Gallica answers the default `python-httpx/...` agent of httpx with `403 Forbidden`. `client.py` sets an explicit `USER_AGENT`. Do not remove it.
+- **The ContentSearch payloads are escaped two times.** The markup arrives as `&lt;span&gt;` and the accents as `&amp;#233;`. Thus `_clean_snippet()` unescapes the text, converts the highlight span to `{braces}`, removes the remaining markup, and then unescapes the text again.
+- **The date filter uses `gallicapublication_date`, not `dc.date`.** `dc.date` is a string index: a relational comparison against it either gives an error or quietly matches nothing, so each date-filtered search quietly gave zero results. The index that operates needs full `YYYY/MM/DD` bounds.
+- **A rejected query gives HTTP 200 with an SRU diagnostic**, not an error status. Without a check this reads as "0 results", which makes a filter with an incorrect form identical to a search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
+- **An anti-bot challenge also gives HTTP 200.** When Gallica decides that a client is crawling it, it serves an ALTCHA "Vérification de sécurité" page. The page is identical byte for byte whatever document the client requested, and the server sends it with HTTP 200 and not with HTTP 429. An earlier version removed its markup and cached it as the text of the document, so each later read gave the challenge instead — quietly and permanently. `_is_challenge_page` detects it, and `download_text` refuses to cache it. The challenge is valid 24 hours, so a client that meets it must stop and must not try again.
+- **`dc.type périodique` matches nothing** while `collapsing=false` is set, because the server returns the issues individually as `fascicule`.
+- **`dc.subject` quietly excludes each periodical issue.** The subject headings belong to the parent catalogue record, so `dc.subject all "X" and dc.type adj "fascicule"` is always zero — confirmed live. A subject filter with a search of the press gives nothing, and it looks exactly like a term that no person used.
+- **There is no index of the place of publication.** `dc.coverage` does not exist (the server answers "There are no translation for the following key"), and `dc.publisher` mixes the publisher and the place: its values look like `E. Voisin (Paris)`, and `dc.publisher all "Paris"` gives 3.8M records. Thus a `--place` flag would be a lie. Do not add one.
+- **`dewey` resolves only at one-digit granularity, and `sdewey` does not resolve at all.** `dewey any "7"` narrows a text query (193,864 → 4,653). `dewey any "79"` and `dewey any "793"` both give zero, although the BnF documents the detailed codes. Ten buckets is too coarse to show, so the client does not use it.
+- **`provenance` operates, but it does not discriminate here.** It is a genuine strict filter (`provenance adj "erara.ch"` alone gives 144,196), but the ranked tail of the text index is entirely `bnf.fr`: to add `provenance adj "bnf.fr"` to a text query changes the total by nothing, and `erara.ch` takes it to zero. It is not worth a flag.
+- **`dc.format` mixes several things** — the physical description, the MIME type and the view count share the field (`1 vol. (66 p.) : fig. ; in-16`, `image/jpeg`, `Nombre total de vues : 76`). `dc.type` is the field for the media type, so there is no `--format` flag.
+- **SRU `explain` answers HTTP 500** (a Tomcat "Could not resolve view with name 'error'"), so the client cannot discover the index list from the service. The documented list is at [api.bnf.fr](https://api.bnf.fr/fr/api-gallica-de-recherche), and it does not fully agree with reality. Confirm any new index live before you show it.
+- **A strict metadata filter converts the ranked tail into a real count.** `dc.subject all "Prestidigitation"` reports 39, not a six-figure number, and it intersects correctly with a text clause (10 with `text adj "gobelet"`). This is the only reliable method to give `total_results` a meaning on this source.
+- **`texteBrut` has a gate with no condition. Do not "correct" the download path when you go back to it.** It is the obvious endpoint with one request for each document, and it is a dead end. See **Text Retrieval** above for the tests. The per-page ALTO path is slower by design, not by oversight.
+- **ALTO reports its encoding incorrectly.** The XML prolog says `ISO-8859-1`, and the bytes are UTF-8. To trust the declaration renders each accented French word as mojibake (`SCÃNE` for `SCÈNE`), which corrupts the text quietly and does not fail loudly. It would survive into quoted material in a report. `alto.py` removes the prolog and decodes the bytes as UTF-8.
+- **ALTO stores a hyphenated word two times.** A word divided across a line break appears as two `String` elements that carry `SUBS_TYPE="HypPart1"` and `"HypPart2"`, and each one holds the full word in `SUBS_CONTENT`. To emit `CONTENT` naively gives `con- noitre`, which no search over the downloaded text will match. `_line_to_text` emits `SUBS_CONTENT` on the first half, and it drops the second half.
+- **The client must keep the ALTO block structure.** A newspaper page is columns of unrelated articles. To flatten the `TextBlock` elements into one paragraph joins the end of one story to the start of another, and it manufactures a false adjacency. That is the error that produces a confident misquotation.
+- **The OCR services need the bare id, not the ARK.** `RequestDigitalElement` and `Pagination` take `bpt6k5619759j`, and the SRU reports `ark:/12148/bpt6k5619759j`.
+- **An empty page is normal.** An illustration plate and a blank leaf both give valid ALTO with no `String` content. `download_text` reports which pages were empty, and it raises an error only if *each* requested page was empty, because that is the image-only case.
+- **The index holds a hyphenated term as separate tokens.** ContentSearch highlights `{Robert}-{Houdin}` as two spans, so a hyphenated name matches loosely and makes the totals larger.
+- **A search record with an incorrect form raises an error.** An earlier `_parse_record` absorbed each exception and returned None, which dropped the record from the results while the reported total still counted it. That is a search that quietly under-reported. For a tool whose value is completeness, a loud failure is better than a quiet omission.
+- **An empty result set is one empty page**, `total_pages: 1`. The API implies zero. The client normalises it, so each caller behaves the same here as for every other source.
