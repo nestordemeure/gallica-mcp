@@ -7,6 +7,8 @@ description: Search Gallica, the digital library of the Bibliothèque nationale 
 
 The digital library of the BnF: French newspapers, periodicals, books and manuscripts. It also holds some English-language titles, such as the Paris edition of the *New York Herald*. Use it for European press reports about performers who travelled in Continental Europe.
 
+**Gallica can block scripts.** It sits behind Cloudflare, and it can refuse each scripted request with HTTP 403 "Sorry, you have been blocked", also for its home page. Then each command prints a line that starts with `STOPPED:` and exits with code 4. Do not retry. Tell the user, use the other European sources, and record in the report that Gallica was not searched.
+
 ## Commands
 
 ```sh

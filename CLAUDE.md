@@ -354,6 +354,7 @@ Thus each user sees **all of the content that matches**, and not one arbitrary i
 
 ## Known behaviours and risks
 
+- **Cloudflare blocks scripted requests.** In November 2026 each request from httpx or curl got HTTP 403 "Attention Required! | Cloudflare" ("Sorry, you have been blocked"), also for the home page. A Chrome tab on the same connection loaded the site, and a `fetch()` of the SRU from that tab gave 200. `_rate_limited_get` raises `GallicaBlocked` on a 403 with a Cloudflare page; the CLI prints `STOPPED:` and exits with code 4.
 - **The User-Agent is mandatory.** Gallica answers the default `python-httpx/...` agent of httpx with `403 Forbidden`. `client.py` sets an explicit `USER_AGENT`. Do not remove it.
 - **The ContentSearch payloads are escaped two times.** The markup arrives as `&lt;span&gt;` and the accents as `&amp;#233;`. Thus `_clean_snippet()` unescapes the text, converts the highlight span to `{braces}`, removes the remaining markup, and then unescapes the text again.
 - **The date filter uses `gallicapublication_date`, not `dc.date`.** `dc.date` is a string index: a relational comparison against it either gives an error or quietly matches nothing, so each date-filtered search quietly gave zero results. The index that operates needs full `YYYY/MM/DD` bounds.

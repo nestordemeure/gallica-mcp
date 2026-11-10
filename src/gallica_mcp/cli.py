@@ -17,7 +17,9 @@ import re
 import sys
 from typing import Any
 
-from .client import DEFAULT_SORT, SORT_ORDERS, GallicaClient
+import httpx
+
+from .client import DEFAULT_SORT, SORT_ORDERS, GallicaBlocked, GallicaClient
 from .paths import cache_dir
 
 RESULTS_PER_PAGE = 50
@@ -457,6 +459,19 @@ def main() -> None:
         exit_code = asyncio.run(args.handler(args))
     except KeyboardInterrupt:
         exit_code = 130
+    except GallicaBlocked as error:
+        print(f"STOPPED: {PROGRAM_NAME}: {error}", file=sys.stderr)
+        exit_code = 4
+    except httpx.HTTPStatusError as error:
+        print(
+            f"{PROGRAM_NAME}: Gallica answered HTTP {error.response.status_code} for {error.request.url.path}. "
+            "Retry once later; if it continues, stop using Gallica and tell the user.",
+            file=sys.stderr,
+        )
+        exit_code = 1
+    except httpx.HTTPError as error:
+        print(f"{PROGRAM_NAME}: network failure talking to Gallica ({type(error).__name__}: {error}).", file=sys.stderr)
+        exit_code = 1
     except (RuntimeError, ValueError) as error:
         # ValueError is how the client rejects an out-of-range filter value, such
         # as an OCR quality outside 0-100. argparse cannot catch those, and a

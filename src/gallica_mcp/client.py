@@ -40,6 +40,10 @@ OCR_QUALITY_MIN = 0.0
 OCR_QUALITY_MAX = 100.0
 
 
+class GallicaBlocked(RuntimeError):
+    """Gallica refused the request: a block, not a fault of the query."""
+
+
 class GallicaClient:
     """Client for interacting with Gallica API."""
 
@@ -723,7 +727,14 @@ class GallicaClient:
         async with self._request_semaphore:
             await self._wait_for_request_slot()
             response = await self.client.get(url, **kwargs)
-            return response
+        if response.status_code == 403 and "cloudflare" in response.text[:3000].lower():
+            raise GallicaBlocked(
+                "Gallica refused the request with a Cloudflare block page (HTTP 403, \"Sorry, you have been blocked\"). "
+                "Gallica blocks scripted requests: even its home page gives 403 to a script, "
+                "while a browser on the same connection works. Retries do not help. "
+                "Stop using Gallica, tell the user, and record in any report that Gallica was not searched."
+            )
+        return response
 
     async def _wait_for_request_slot(self) -> None:
         """Ensure minimum spacing between outbound requests, across processes."""
