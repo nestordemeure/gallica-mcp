@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from . import browser
 from .client import DEFAULT_SORT, SORT_ORDERS, GallicaBlocked, GallicaClient
 from .paths import cache_dir
 
@@ -215,6 +216,11 @@ async def run_snippets(args: argparse.Namespace) -> int:
     for snippet in snippets:
         print(f"    {snippet.get('page') or 'p.?'}  · {snippet.get('text', '')}")
 
+    return 0
+
+
+async def run_browser(args: argparse.Namespace) -> int:
+    print(browser.launch())
     return 0
 
 
@@ -449,6 +455,12 @@ def build_parser() -> argparse.ArgumentParser:
     get.add_argument("--json", action="store_true", help="emit JSON instead of text")
     get.set_defaults(handler=run_get)
 
+    browser_parser = subparsers.add_parser(
+        "browser",
+        help="open the Chrome window that carries the requests (the other commands open it when needed)",
+    )
+    browser_parser.set_defaults(handler=run_browser)
+
     return parser
 
 
@@ -459,7 +471,7 @@ def main() -> None:
         exit_code = asyncio.run(args.handler(args))
     except KeyboardInterrupt:
         exit_code = 130
-    except GallicaBlocked as error:
+    except (GallicaBlocked, browser.BrowserError) as error:
         print(f"STOPPED: {PROGRAM_NAME}: {error}", file=sys.stderr)
         exit_code = 4
     except httpx.HTTPStatusError as error:

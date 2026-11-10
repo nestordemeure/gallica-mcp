@@ -19,6 +19,8 @@ There are two ways to use it: an **MCP server** for clients that speak MCP, and 
 uv sync
 ```
 
+Gallica blocks scripted HTTP clients with Cloudflare, so every request runs as `fetch()` in a Gallica tab of a dedicated Chrome window, driven over the DevTools protocol. It needs Chrome or Chromium. The window is the one newspapers-mcp uses (port 9333, profile `~/.local/share/newspapers-mcp/chrome`); `GALLICA_DEBUG_PORT` and `GALLICA_CHROME_PROFILE` change them. Each command opens the window when it is closed.
+
 ### Install the CLI
 
 ```bash
@@ -59,6 +61,7 @@ gallica search --library 'departement Arts du spectacle'        # one holding co
 gallica search 'Exposition universelle' --from-year 1889 --to-year 1890 --sort date_asc --pages all
 gallica snippets 'ark:/12148/bpt6k1910270z' '"Tour Eiffel"'    # where it appears, with PAG_ page ids
 gallica get 'ark:/12148/bpt6k1910270z' --pages 2-3             # cached OCR text path
+gallica browser                                                 # open the Chrome window ahead of time
 ```
 
 Search returns documents without snippets, so the workflow is search → `snippets` to judge a document cheaply → `get` only the pages worth reading. Boolean operators must be UPPERCASE. Add `--json` for machine-readable output.

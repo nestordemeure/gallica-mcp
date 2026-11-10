@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from . import browser
 from .alto import alto_to_text
 from .paths import cache_dir as default_cache_dir
 from .query_parser import build_text_query_clause, escape_cql_literal
@@ -20,8 +21,6 @@ from .ratelimit import (
     configured_ocr_burst,
     configured_ocr_refill,
 )
-
-USER_AGENT = "gallica-mcp/0.1.0 (historical research tool)"
 
 # Result ordering. The names match the other archive clients; the values are the
 # CQL suffix each one appends. Relevance is Gallica's own default, expressed by
@@ -80,13 +79,6 @@ class GallicaClient:
         """
         self.cache_dir = Path(cache_dir) if cache_dir is not None else default_cache_dir()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        # Gallica rejects httpx's default "python-httpx/..." agent with 403, so
-        # identify ourselves explicitly.
-        self.client = httpx.AsyncClient(
-            timeout=30.0,
-            follow_redirects=True,
-            headers={'User-Agent': USER_AGENT},
-        )
         self._request_semaphore = asyncio.Semaphore(max_concurrent_requests)
         # Spacing is shared with every other process using this cache: an
         # instance attribute paces nothing once each CLI call is its own process.
@@ -107,8 +99,8 @@ class GallicaClient:
         )
 
     async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
+        """Close the DevTools connection to the Gallica tab."""
+        browser._close_session()
 
     async def search(
         self,
@@ -723,16 +715,19 @@ class GallicaClient:
         return f'({" or ".join(clauses)})'
 
     async def _rate_limited_get(self, url: str, **kwargs) -> httpx.Response:
-        """Issue a GET request honoring concurrency and rate limits."""
+        """Issue a GET in the Gallica tab of the Chrome window, honoring
+        concurrency and rate limits.
+
+        Cloudflare refuses scripted clients, so no request goes out directly.
+        """
         async with self._request_semaphore:
             await self._wait_for_request_slot()
-            response = await self.client.get(url, **kwargs)
+            response = await asyncio.to_thread(browser.get, url, **kwargs)
         if response.status_code == 403 and "cloudflare" in response.text[:3000].lower():
             raise GallicaBlocked(
-                "Gallica refused the request with a Cloudflare block page (HTTP 403, \"Sorry, you have been blocked\"). "
-                "Gallica blocks scripted requests: even its home page gives 403 to a script, "
-                "while a browser on the same connection works. Retries do not help. "
-                "Stop using Gallica, tell the user, and record in any report that Gallica was not searched."
+                "Gallica refused the request with a Cloudflare block page (HTTP 403), also in the Chrome window. "
+                "Retries do not help. Stop using Gallica and tell the user: they can look at the Gallica tab "
+                "of the Chrome window. Record in any report that Gallica was not searched."
             )
         return response
 

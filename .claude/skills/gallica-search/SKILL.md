@@ -7,7 +7,7 @@ description: Search Gallica, the digital library of the Bibliothèque nationale 
 
 The digital library of the BnF: French newspapers, periodicals, books and manuscripts. It also holds some English-language titles, such as the Paris edition of the *New York Herald*. Use it for European press reports about performers who travelled in Continental Europe.
 
-**Gallica can block scripts.** It sits behind Cloudflare, and it can refuse each scripted request with HTTP 403 "Sorry, you have been blocked", also for its home page. Then each command prints a line that starts with `STOPPED:` and exits with code 4. Do not retry. Tell the user, use the other European sources, and record in the report that Gallica was not searched.
+**The requests go through a Chrome window.** Gallica blocks scripts with Cloudflare, so the CLI runs each request in a Gallica tab of the dedicated Chrome window that Newspapers.com also uses. A command opens the window when it is closed; `gallica browser` opens it ahead of time. Do not close the window or the tab. If a command prints a line that starts with `STOPPED:` and exits with code 4, do not retry. Tell the user what the line says, use the other European sources, and record in the report that Gallica was not searched.
 
 ## Commands
 
@@ -15,6 +15,7 @@ The digital library of the BnF: French newspapers, periodicals, books and manusc
 gallica search "<query>" [--pages N|N-M|all] [--sort ORDER] [filters] [--json]
 gallica snippets <ark> "<query>"   # where the query appears inside one document
 gallica get <ark> [--pages 30-35]  # download OCR text, prints path to the cached file
+gallica browser                    # open the Chrome window that carries the requests
 ```
 
 Note that `--pages` has a different meaning on each command. On `search` it means the *result* pages. On `get` it means the *document* pages.

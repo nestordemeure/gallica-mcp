@@ -4,7 +4,7 @@ An MCP server for a search of Gallica, the digital library of the Bibliothèque 
 
 ## Stack
 
-- Python ≥3.12, uv, fastMCP ≥2.0.0, httpx ≥0.27.0
+- Python ≥3.12, uv, fastMCP ≥2.0.0, httpx ≥0.27.0, websockets ≥13.0
 
 ## Functions
 
@@ -23,6 +23,7 @@ gallica-mcp/
 ├── src/gallica_mcp/
 │   ├── __init__.py
 │   ├── alto.py             # ALTO XML -> plain text
+│   ├── browser.py          # Requests through the Chrome window
 │   ├── client.py           # API client + caching
 │   ├── cli.py              # `gallica` command-line interface
 │   ├── paths.py            # Cache location resolution
@@ -354,8 +355,7 @@ Thus each user sees **all of the content that matches**, and not one arbitrary i
 
 ## Known behaviours and risks
 
-- **Cloudflare blocks scripted requests.** In November 2026 each request from httpx or curl got HTTP 403 "Attention Required! | Cloudflare" ("Sorry, you have been blocked"), also for the home page. A Chrome tab on the same connection loaded the site, and a `fetch()` of the SRU from that tab gave 200. `_rate_limited_get` raises `GallicaBlocked` on a 403 with a Cloudflare page; the CLI prints `STOPPED:` and exits with code 4.
-- **The User-Agent is mandatory.** Gallica answers the default `python-httpx/...` agent of httpx with `403 Forbidden`. `client.py` sets an explicit `USER_AGENT`. Do not remove it.
+- **Cloudflare blocks scripted requests, so every request goes through Chrome.** Each request from httpx or curl gets HTTP 403 "Attention Required! | Cloudflare" ("Sorry, you have been blocked"), also for the home page, while a Chrome tab on the same connection works. Thus `browser.py` attaches to a dedicated Chrome window over the DevTools protocol and runs `fetch()` inside a gallica.bnf.fr tab. It is the window of newspapers-mcp: the same port (9333) and the same profile, so one window serves both tools. A command opens the window and the tab when they are absent. `browser.get` returns an `httpx.Response`, so the parsers and the error handling did not change, and a fetch that times out raises `httpx.ReadTimeout` as before. The body comes back as base64, because `response.text()` in the tab always decodes as UTF-8. If the tab also gets the Cloudflare 403, `_rate_limited_get` raises `GallicaBlocked`; the CLI prints `STOPPED:` and exits with code 4, as for a `BrowserError`.
 - **The ContentSearch payloads are escaped two times.** The markup arrives as `&lt;span&gt;` and the accents as `&amp;#233;`. Thus `_clean_snippet()` unescapes the text, converts the highlight span to `{braces}`, removes the remaining markup, and then unescapes the text again.
 - **The date filter uses `gallicapublication_date`, not `dc.date`.** `dc.date` is a string index: a relational comparison against it either gives an error or quietly matches nothing, so each date-filtered search quietly gave zero results. The index that operates needs full `YYYY/MM/DD` bounds.
 - **A rejected query gives HTTP 200 with an SRU diagnostic**, not an error status. Without a check this reads as "0 results", which makes a filter with an incorrect form identical to a search that genuinely found nothing. `_raise_for_diagnostics` surfaces it.
