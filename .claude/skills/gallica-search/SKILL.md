@@ -56,7 +56,7 @@ Most of the filters above only make a result set smaller. These four change the 
 
 **Warning: read this before you use `--subject`.** The headings belong to the parent catalogue record, and periodical *issues* have none. `--subject Prestidigitation --type fascicule` gives **zero**, and so does each combination of a subject with a search of the press. Use `--subject` to find catalogued books, prints and programmes. Never use it to limit newspaper coverage, where it removes everything and gives no message.
 
-**`--min-ocr-quality SCORE`** keeps only the documents whose OCR score is SCORE or more, out of 100. The central problem of this source is scans that a person cannot read, so this is the most generally useful of the four filters. `"Tour Eiffel"` reports 622,818 results, and `--min-ocr-quality 99` reduces this to **113,479**. It also moves the documents that a person can read to the top. It is the correct filter to use *before* `get`, because you cannot quote a document with bad OCR. Any value above 0 excludes material with no OCR at all — engravings, photographs and image-only scans — so do not combine it with `--type image`.
+**`--min-ocr-quality SCORE`** keeps only the documents whose OCR score is SCORE or more, out of 100. The central problem of this source is scans that a person cannot read, so this is the most generally useful of the four filters. `"Tour Eiffel"` reports 622,818 results, and `--min-ocr-quality 99` reduces this to **113,479**. It also moves the documents that a person can read to the top. It is the correct filter to use *before* `get`, because you cannot quote a document with bad OCR. Any value above 0 excludes material with no OCR at all (engravings, photographs and image-only scans), so do not combine it with `--type image`.
 
 **`--publisher NAME`** matches the publisher as printed: `"Tour Eiffel" --publisher Hachette` gives **287 results** in place of 622,818. Note one risk: this field also holds the place of publication in parentheses (`E. Voisin (Paris)`). Thus `--publisher Paris` matches the *place*. It is not a place filter, and this source has no index of the place of publication.
 
@@ -78,7 +78,7 @@ This has three consequences, and they control how you use this source:
 
 **A strict filter corrects the total, and this is the practical solution.** The ranked tail comes from the text index alone. The metadata filters intersect that tail strictly, so the reported number becomes a real count of matches again. `--subject Prestidigitation` reports 29 and means 29. This is why `--pages all` is safe on a filtered query and dangerous on a query with no filter. It is also the reason to spend one filter in place of more pagination.
 
-Use `--sort date_asc` only after a query is narrow enough that you intend to read the full result set — for example, a chronological reconstruction across a limited date range. On a query with no limits, an order by date puts thousands of weak matches in front of the good material, which is the opposite of what a researcher needs.
+Use `--sort date_asc` only after a query is narrow enough that you intend to read the full result set: for example, a chronological reconstruction across a limited date range. On a query with no limits, an order by date puts thousands of weak matches in front of the good material, which is the opposite of what a researcher needs.
 
 ## How to be complete
 
